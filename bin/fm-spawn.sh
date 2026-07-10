@@ -73,6 +73,10 @@
 #                  written by this script; outside the worktree to avoid pi's trust gate)
 #     __PITURNEND__ absolute path to .pi/extensions/fm-primary-turnend-guard.ts in a pi secondmate home
 #     __PIWATCH__   absolute path to .pi/extensions/fm-primary-pi-watch.ts in a pi secondmate home
+#     __OMPEXT__   absolute path to state/<task-id>.omp-ext.ts (omp turn-end extension,
+#                  written by this script; outside the worktree to avoid omp's trust gate)
+#     __OMPTURNEND__ absolute path to .omp/extensions/fm-primary-turnend-guard.ts in an omp secondmate home
+#     __OMPWATCH__  absolute path to .omp/extensions/fm-primary-omp-watch.ts in an omp secondmate home
 #   Verified templates optionally inject agent secrets at the final launch-command
 #   boundary. Injection is enabled only when `op` and
 #   `with-1password-local-development-reader` are on PATH and /usr/bin/security
@@ -295,7 +299,7 @@ FIRSTMATE_HOME=
 
 if [ "$KIND" = secondmate ]; then
   case "${POS[1]:-}" in
-    ''|claude|codex|opencode|pi|grok)
+    ''|claude|codex|opencode|pi|grok|omp)
       ARG3=${POS[1]:-}
       ;;
     *' '*)
@@ -369,6 +373,19 @@ launch_template() {
     # launch command - it is a Stop-event hook installed below (global hook +
     # per-task pointer), so the template is identical for ship/scout/secondmate.
     grok) printf '%s%s' "$agent_secrets_prefix" 'grok --always-approve __MODELFLAG____EFFORTFLAG__"$(cat __BRIEF__)"' ;;
+    # omp (Oh My Pi): a positional prompt starts the supervised interactive
+    # session. --auto-approve makes the crewmate autonomous (OMP has an approval
+    # system, unlike pi), the targeted equivalent of claude's
+    # --dangerously-skip-permissions. Turn-end rides an -e extension exactly like
+    # pi: the ship/scout template loads the state-resident __OMPEXT__ signal, and a
+    # secondmate loads the home's tracked .omp/extensions supervisors.
+    omp)
+      if [ "$kind" = secondmate ]; then
+        printf '%s%s' "$agent_secrets_prefix" 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPTURNEND__ -e __OMPWATCH__ "$(cat __BRIEF__)"'
+      else
+        printf '%s%s' "$agent_secrets_prefix" 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(cat __BRIEF__)"'
+      fi
+      ;;
     *) return 1 ;;
   esac
 }
@@ -456,7 +473,7 @@ model_flag_for_harness() {
   local harness=$1 model=$2
   [ -n "$model" ] && [ "$model" != default ] || return 0
   case "$harness" in
-    claude|codex|opencode|pi|grok)
+    claude|codex|opencode|pi|grok|omp)
       printf -- '--model %s ' "$(shell_quote "$model")"
       ;;
   esac
@@ -493,6 +510,14 @@ effort_flag_for_harness() {
       # its --thinking flag.
       case "$effort" in
         low|medium|high|xhigh|max) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
+      esac
+      ;;
+    omp)
+      # OMP accepts --thinking off|minimal|low|medium|high|xhigh|auto. firstmate's
+      # effort axis is low|medium|high|xhigh; omit max (OMP has no max level) rather
+      # than pass a value the CLI rejects.
+      case "$effort" in
+        low|medium|high|xhigh) printf -- '--thinking %s ' "$(shell_quote "$effort")" ;;
       esac
       ;;
     # opencode's interactive `opencode --prompt` launch has a verified --model
@@ -936,6 +961,22 @@ export default function (pi: any) {
 }
 EOF
       ;;
+    omp*)
+      # OMP, like pi, gates extensions loaded from INSIDE the project behind a
+      # project-trust dialog, so the crewmate turn-end signal is written OUTSIDE the
+      # worktree and loaded with an explicit -e path (no dialog). Lives in state/,
+      # cleaned by teardown. Uses "turn_end" (every turn boundary), not "agent_end".
+      cat > "$STATE/$ID.omp-ext.ts" <<EOF
+// Firstmate turn-end signal; written by fm-spawn.
+// Use "turn_end" (fires after each turn the agent finishes), not "agent_end"
+// (fires once, only when the whole run exits): the watcher needs a signal at
+// every turn boundary so an idle crewmate is surfaced, not just at shutdown.
+import { execFile } from "node:child_process";
+export default function (pi: { on: (event: string, handler: () => void) => void }) {
+  pi.on("turn_end", () => execFile("touch", ["$TURNEND"]));
+}
+EOF
+      ;;
     codex*)
       # codex: turn-end rides the launch command via -c notify=[...] and __TURNEND__.
       ;;
@@ -1055,6 +1096,9 @@ sq_turnend=$(shell_quote "$TURNEND")
 sq_piext=$(shell_quote "$STATE/$ID.pi-ext.ts")
 sq_piturnend=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-turnend-guard.ts")
 sq_piwatch=$(shell_quote "$PROJ_ABS/.pi/extensions/fm-primary-pi-watch.ts")
+sq_ompext=$(shell_quote "$STATE/$ID.omp-ext.ts")
+sq_ompturnend=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-turnend-guard.ts")
+sq_ompwatch=$(shell_quote "$PROJ_ABS/.omp/extensions/fm-primary-omp-watch.ts")
 MODELFLAG=$(model_flag_for_harness "$HARNESS" "$MODEL")
 EFFORTFLAG=$(effort_flag_for_harness "$HARNESS" "$EFFORT")
 LAUNCH=${LAUNCH//__MODELFLAG__/$MODELFLAG}
@@ -1064,6 +1108,9 @@ LAUNCH=${LAUNCH//__TURNEND__/$sq_turnend}
 LAUNCH=${LAUNCH//__PIEXT__/$sq_piext}
 LAUNCH=${LAUNCH//__PITURNEND__/$sq_piturnend}
 LAUNCH=${LAUNCH//__PIWATCH__/$sq_piwatch}
+LAUNCH=${LAUNCH//__OMPEXT__/$sq_ompext}
+LAUNCH=${LAUNCH//__OMPTURNEND__/$sq_ompturnend}
+LAUNCH=${LAUNCH//__OMPWATCH__/$sq_ompwatch}
 if [ "$KIND" = secondmate ]; then
   sq_home=$(shell_quote "$PROJ_ABS")
   LAUNCH="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_HOME=$sq_home $LAUNCH"
