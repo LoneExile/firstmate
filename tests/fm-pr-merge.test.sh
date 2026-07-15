@@ -187,7 +187,7 @@ test_malformed_url_refuses_before_merge() {
   set -e
 
   expect_code 1 "$rc" "malformed-url: fm-pr-merge should refuse a non-GitHub PR URL"
-  assert_grep 'PR URL must match https://github.com/<owner>/<repo>/pull/<number>' "$case_dir/stderr" \
+  assert_grep 'PR URL must be a GitHub' "$case_dir/stderr" \
     "malformed-url: refusal did not explain the expected URL shape"
   assert_no_grep 'pr=https://gitlab.com/example/repo/-/merge_requests/1' "$case_dir/state/task-x1.meta" \
     "malformed-url: malformed PR URL was recorded in meta"
@@ -213,7 +213,7 @@ test_rejects_unsafe_url_segments_before_recording() {
   set -e
 
   expect_code 1 "$rc" "unsafe-url-segment: fm-pr-merge should refuse unsafe owner/repo characters"
-  assert_grep 'PR URL must match https://github.com/<owner>/<repo>/pull/<number>' "$case_dir/stderr" \
+  assert_grep 'PR URL must be a GitHub' "$case_dir/stderr" \
     "unsafe-url-segment: refusal did not explain the expected URL shape"
   # shellcheck disable=SC2016  # Literal command substitution must not reach meta.
   assert_no_grep 'pr=https://github.com/evil$(echo pwned)/repo/pull/7' "$case_dir/state/task-x1.meta" \

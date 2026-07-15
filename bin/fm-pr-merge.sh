@@ -81,13 +81,16 @@ fm_pr_parse "$URL" || {
   exit 1
 }
 
+# Reject a caller --repo override before recording pr= (the repo is authoritative
+# from the PR URL). GitHub-only: the gitea path ignores extra args entirely.
+[ "$PR_HOST" != github ] || reject_repo_overrides "$@" || exit 1
+
 "$SCRIPT_DIR/fm-pr-check.sh" "$ID" "$URL"
 grep -qxF "pr=$URL" "$META" || { echo "error: fm-pr-check did not record pr=$URL in $META; refusing to merge" >&2; exit 1; }
 
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 
 if [ "$PR_HOST" = github ]; then
-  reject_repo_overrides "$@" || exit 1
   merge_args=()
   if ! caller_has_merge_method "$@"; then
     merge_args=(--squash)

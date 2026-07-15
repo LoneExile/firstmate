@@ -91,6 +91,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-lock-lib.sh"
 # shellcheck source=bin/fm-gate-refuse-lib.sh
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
+# shellcheck source=bin/fm-pr-host-lib.sh
+. "$SCRIPT_DIR/fm-pr-host-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never tear
 # down a worktree (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -181,18 +183,19 @@ remove_grok_turnend_auth() {
 # single match and returns 0; returns non-zero on no match or any lookup failure,
 # so the caller treats it as "no PR found" (fail-safe).
 pr_number_from_branch() {
-  local branch=$1 out n
+  local branch=$1
   [ -n "$branch" ] && [ "$branch" != HEAD ] || return 1
-  out=$( cd "$WT" && gh-axi pr list --state all --head "$branch" --limit 1 2>/dev/null ) || return 1
-  n=$(printf '%s\n' "$out" | sed -n 's/^[[:space:]]*\([0-9][0-9]*\),.*/\1/p' | head -1)
-  [ -n "$n" ] || return 1
-  printf '%s' "$n"
+  fm_pr_number_from_branch "$WT" "$branch" "$PR_URL"
 }
 
 pr_number_from_target() {
   local target=$1 n
   case "$target" in
     '' ) return 1 ;;
+    *"/pulls/"*)
+      n=${target##*/pulls/}
+      n=${n%%[!0-9]*}
+      ;;
     *"/pull/"*)
       n=${target##*/pull/}
       n=${n%%[!0-9]*}
@@ -253,17 +256,15 @@ EOF
 # current work is not contained in the PR head, no PR is found, or any gh error
 # occurs - the caller then falls back to the content check.
 pr_is_merged() {
-  local branch=$1 target view state head current
+  local branch=$1 target state head current
   if [ -n "$PR_URL" ]; then
     target=$PR_URL
   else
     target=$(pr_number_from_branch "$branch") || return 1
   fi
   [ -n "$target" ] || return 1
-  view=$(cd "$WT" && gh pr view "$target" --json state,headRefOid -q '.state + "\t" + .headRefOid' 2>/dev/null) || return 1
-  state=${view%%$'\t'*}
-  head=${view#*$'\t'}
-  [ "$state" != "$view" ] || return 1
+  state=$(fm_pr_view_state "$target" "$WT") || return 1
+  head=$(fm_pr_view_head "$target" "$WT") || return 1
   case "$state" in
     MERGED|merged) ;;
     *) return 1 ;;
