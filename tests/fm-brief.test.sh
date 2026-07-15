@@ -106,6 +106,32 @@ test_no_mistakes_dod_wording() {
   pass "fm-brief.sh: no-mistakes DOD wording avoids the apostrophe regression"
 }
 
+# The direct-PR DOD must be host-aware: a Gitea-hosted project cannot open its PR
+# with gh-axi (github.com only). The brief must name both the GitHub (gh-axi) and
+# Gitea (REST API / gitea-api skill) paths and tell the crewmate to detect the host.
+test_direct_pr_dod_is_host_aware() {
+  local home id brief
+  home="$TMP_ROOT/direct-pr-host-home"
+  mkdir -p "$home/data"
+  cat > "$home/data/projects.md" <<'EOF'
+- direct-proj [direct-PR] - fixture for direct-PR host-awareness (added 2026-07-15)
+EOF
+  id="brief-directpr-host-e1"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" "$id" direct-proj >/dev/null 2>&1
+  brief="$home/data/$id/brief.md"
+  assert_present "$brief" "direct-PR brief was not scaffolded"
+  assert_grep "git remote get-url origin" "$brief" \
+    "direct-PR DOD does not tell the crewmate to detect the git host"
+  assert_grep "gh-axi pr create" "$brief" \
+    "direct-PR DOD lost the GitHub PR-creation path"
+  assert_grep "Gitea REST API" "$brief" \
+    "direct-PR DOD lost the Gitea PR-creation path"
+  # shellcheck disable=SC2016 # Literal API path must remain unexpanded.
+  assert_grep '/api/v1/repos/<owner>/<repo>/pulls' "$brief" \
+    "direct-PR DOD lost the concrete Gitea pulls endpoint"
+  pass "fm-brief.sh: direct-PR DOD is host-aware (GitHub gh-axi + Gitea REST API)"
+}
+
 test_ship_project_memory_wording() {
   local home id brief
   home="$TMP_ROOT/project-memory-home"
@@ -313,6 +339,7 @@ test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
+test_direct_pr_dod_is_host_aware
 test_ship_project_memory_wording
 test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path

@@ -283,7 +283,10 @@ case "$MODE" in
 # Definition of done
 This project ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
+When it is implemented and committed, push your \`fm/$ID\` branch and open the PR against the git host this project uses - detect it with \`git remote get-url origin\`:
+- **GitHub** origin (github.com): open the PR with \`gh-axi pr create\`.
+- **Gitea** origin (any non-github host, such as \`private-git.ocin.cloud\`): open the PR via the Gitea REST API - use the \`gitea-api\` skill, or \`POST /api/v1/repos/<owner>/<repo>/pulls\` with \`head\` set to your branch and \`base\` to the default branch. \`gh-axi\` targets github.com only; never point it at a Gitea host.
+Then append \`done: PR {url}\` to the status file and stop.
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
 )
