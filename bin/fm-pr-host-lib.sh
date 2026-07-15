@@ -61,7 +61,10 @@ fm_pr_parse() {  # <pr-url>
   rest=${rest#pull/}
   PR_NUMBER=${rest%%/*}
   case "$PR_NUMBER" in ''|*[!0-9]*) return 1 ;; esac
-  [ -n "$PR_OWNER" ] && [ -n "$PR_REPO" ] || return 1
+  # Strict owner/repo validation (preserves the old GitHub-only parse's safety;
+  # rejects unsafe segments like command-substitution or path traversal for both hosts).
+  case "$PR_OWNER" in ''|-*|*-) return 1 ;; *[!A-Za-z0-9-]*) return 1 ;; esac
+  case "$PR_REPO" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   return 0
 }
 
