@@ -89,6 +89,8 @@ run_pr_merge() {
   FM_ROOT_OVERRIDE="$ROOT" \
   FM_STATE_OVERRIDE="$case_dir/state" \
   FM_TEST_GH_AXI_LOG="$case_dir/gh-axi.log" \
+  FM_TEST_CURL_LOG="$case_dir/curl.log" \
+  FM_GITEA_TOKEN=testtoken \
   PATH="$case_dir/fakebin:$PATH" \
     "$PR_MERGE" "$@"
   rc=$?
@@ -97,6 +99,33 @@ run_pr_merge() {
     return 1
   fi
   return "$rc"
+}
+
+# Gitea REST mock: answers the pull GET (head sha) and records the merge POST.
+# fm-pr-check.sh's head lookup and fm_pr_merge both go through this curl stub, so
+# the whole Gitea path runs without touching gh-axi.
+add_gitea_mocks() {
+  local case_dir=$1
+  cat > "$case_dir/fakebin/curl" <<'SH'
+#!/usr/bin/env bash
+method=GET url= data=
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -X) method=$2; shift 2 ;;
+    -d) data=$2; shift 2 ;;
+    -H) shift 2 ;;
+    http://*|https://*) url=$1; shift ;;
+    *) shift ;;
+  esac
+done
+printf '%s %s %s\n' "$method" "$url" "$data" >> "$FM_TEST_CURL_LOG"
+case "$method $url" in
+  "POST "*/pulls/*/merge) exit 0 ;;
+  "GET "*/pulls/*) printf '{"merged":false,"state":"open","head":{"sha":"%s"}}\n' "${FM_TEST_GITEA_HEAD:-deadbeefcafefeed0000000000000000deadbeef}" ;;
+  *) exit 22 ;;
+esac
+SH
+  chmod +x "$case_dir/fakebin/curl"
 }
 
 test_records_pr_and_head_before_merging() {
@@ -301,6 +330,45 @@ test_parses_pr_url_for_gh_axi() {
   pass "fm-pr-merge parses a GitHub PR URL into gh-axi number and --repo arguments"
 }
 
+test_gitea_pr_records_and_merges_via_rest() {
+  local case_dir
+  case_dir=$(make_case gitea-merge)
+  mkdir -p "$case_dir/wt"
+  add_gitea_mocks "$case_dir"
+  : > "$case_dir/gh-axi.log"
+  : > "$case_dir/curl.log"
+
+  run_pr_merge "$case_dir" task-x1 https://gitea.example.com/example/repo/pulls/9 \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "gitea-merge: fm-pr-merge failed"
+
+  assert_grep 'pr=https://gitea.example.com/example/repo/pulls/9' "$case_dir/state/task-x1.meta" \
+    "gitea-merge: pr= was not recorded"
+  assert_grep 'pr_head=deadbeefcafefeed0000000000000000deadbeef' "$case_dir/state/task-x1.meta" \
+    "gitea-merge: pr_head= was not recorded from the Gitea REST API"
+  grep -qE '^POST https://gitea\.example\.com/api/v1/repos/example/repo/pulls/9/merge ' "$case_dir/curl.log" \
+    || fail "gitea-merge: merge was not POSTed to the Gitea REST API"
+  grep -qF '"Do":"squash"' "$case_dir/curl.log" \
+    || fail "gitea-merge: default squash method was not sent to the Gitea REST API"
+  [ ! -s "$case_dir/gh-axi.log" ] \
+    || fail "gitea-merge: a Gitea merge leaked to gh-axi"
+  pass "fm-pr-merge merges a Gitea PR via the Gitea REST API and records pr=/pr_head= without touching gh-axi"
+}
+
+test_gitea_explicit_merge_method_via_rest() {
+  local case_dir
+  case_dir=$(make_case gitea-merge-method)
+  mkdir -p "$case_dir/wt"
+  add_gitea_mocks "$case_dir"
+  : > "$case_dir/curl.log"
+
+  run_pr_merge "$case_dir" task-x1 https://gitea.example.com/example/repo/pulls/12 -- --rebase \
+    > "$case_dir/stdout" 2> "$case_dir/stderr" || fail "gitea-merge-method: fm-pr-merge failed"
+
+  grep -qF '"Do":"rebase"' "$case_dir/curl.log" \
+    || fail "gitea-merge-method: explicit --rebase was not honored on the Gitea REST merge"
+  pass "fm-pr-merge honors an explicit Gitea merge method (--rebase) on the REST merge"
+}
+
 test_records_pr_and_head_before_merging
 test_merge_failure_propagates_after_recording
 test_extra_merge_args_forwarded
@@ -311,3 +379,5 @@ test_repo_override_args_refuse_before_recording
 test_explicit_merge_method_not_overridden
 test_method_equals_merge_method_not_overridden
 test_parses_pr_url_for_gh_axi
+test_gitea_pr_records_and_merges_via_rest
+test_gitea_explicit_merge_method_via_rest

@@ -109,16 +109,43 @@ _fm_gitea_curl() {  # <token> <method> <url> [json-body]
   fi
 }
 
+# Host of a PR ref: for a URL, the URL's host; for a bare number, the worktree
+# origin's host (github.com -> github; an https/ssh non-github remote -> gitea;
+# anything else, incl. file:// test remotes, defaults to github, exactly as the
+# legacy gh-only path did). Non-zero only if a bare number has no worktree.
+_fm_pr_ref_host() {  # <ref> [worktree]
+  local ref=$1 wt=${2:-} origin
+  case "$ref" in http://*|https://*) fm_pr_host "$ref"; return 0 ;; esac
+  [ -n "$wt" ] || return 1
+  origin=$(cd "$wt" 2>/dev/null && git remote get-url origin 2>/dev/null)
+  case "$origin" in
+    *github.com*) printf github ;;
+    https://*|git@*) printf gitea ;;
+    *) printf github ;;
+  esac
+}
+
+# Resolve a PR ref to a URL: a URL passes through; a bare number is expanded
+# against the worktree origin (Gitea accessors need owner/repo from the URL).
+_fm_pr_pr_url() {  # <ref> [worktree]
+  local ref=$1 wt=${2:-}
+  case "$ref" in
+    http://*|https://*) printf '%s' "$ref" ;;
+    *) [ -n "$wt" ] || return 1; fm_pr_url_from_worktree "$wt" "$ref" ;;
+  esac
+}
+
 # Echo the normalized PR state: MERGED|OPEN|CLOSED (matching gh's vocabulary).
 # Returns non-zero on any lookup failure.
-fm_pr_view_state() {  # <pr-url> [worktree]
-  local url=${1:?} wt=${2:-} tok json
-  case "$(fm_pr_host "$url")" in
+fm_pr_view_state() {  # <pr-url-or-number> [worktree]
+  local ref=${1:?} wt=${2:-} url tok json
+  case "$(_fm_pr_ref_host "$ref" "$wt")" in
     github)
-      ( [ -n "$wt" ] && cd "$wt"; gh pr view "$url" --json state -q .state 2>/dev/null )
+      ( [ -z "$wt" ] || cd "$wt" || exit 1; gh pr view "$ref" --json state -q .state 2>/dev/null )
       ;;
     gitea)
       command -v jq >/dev/null 2>&1 || return 1
+      url=$(_fm_pr_pr_url "$ref" "$wt") || return 1
       fm_pr_parse "$url" || return 1
       tok=$(fm_gitea_token "$wt") || return 1
       json=$(_fm_gitea_curl "$tok" GET "$PR_BASE/api/v1/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER") || return 1
@@ -129,14 +156,15 @@ fm_pr_view_state() {  # <pr-url> [worktree]
 }
 
 # Echo the PR head commit SHA. Returns non-zero on any lookup failure.
-fm_pr_view_head() {  # <pr-url> [worktree]
-  local url=${1:?} wt=${2:-} tok json
-  case "$(fm_pr_host "$url")" in
+fm_pr_view_head() {  # <pr-url-or-number> [worktree]
+  local ref=${1:?} wt=${2:-} url tok json
+  case "$(_fm_pr_ref_host "$ref" "$wt")" in
     github)
-      ( [ -n "$wt" ] && cd "$wt"; gh pr view "$url" --json headRefOid -q .headRefOid 2>/dev/null )
+      ( [ -z "$wt" ] || cd "$wt" || exit 1; gh pr view "$ref" --json headRefOid -q .headRefOid 2>/dev/null )
       ;;
     gitea)
       command -v jq >/dev/null 2>&1 || return 1
+      url=$(_fm_pr_pr_url "$ref" "$wt") || return 1
       fm_pr_parse "$url" || return 1
       tok=$(fm_gitea_token "$wt") || return 1
       json=$(_fm_gitea_curl "$tok" GET "$PR_BASE/api/v1/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER") || return 1
@@ -172,7 +200,10 @@ fm_pr_number_from_branch() {  # <worktree> <branch> [pr-url-for-host-hint]
       [ -n "$owner" ] && [ -n "$repo" ] || return 1
       tok=$(fm_gitea_token "$wt") || return 1
       json=$(_fm_gitea_curl "$tok" GET "$base/api/v1/repos/$owner/$repo/pulls?state=all&limit=50") || return 1
-      printf '%s' "$json" | jq -r --arg b "$branch" 'map(select(.head.ref==$b)) | .[0].number // empty' 2>/dev/null
+      local n
+      n=$(printf '%s' "$json" | jq -r --arg b "$branch" 'map(select(.head.ref==$b)) | .[0].number // empty' 2>/dev/null)
+      [ -n "$n" ] || return 1
+      printf '%s' "$n"
       ;;
     *)
       local out n
@@ -211,5 +242,25 @@ fm_pr_merge() {  # <pr-url> <method> [worktree] [-- <extra gh-axi args>]
         "{\"Do\":\"$do_val\",\"delete_branch_after_merge\":true}" >/dev/null
       ;;
     *) return 1 ;;
+  esac
+}
+
+# Build a canonical PR URL from a worktree's origin remote + PR number, so the
+# fm_pr_* accessors (which take a URL) can be used when only a number is known
+# (e.g. teardown's branch-derived PR lookup). GitHub uses /pull/, Gitea /pulls/.
+fm_pr_url_from_worktree() {  # <worktree> <number>
+  local wt=${1:?} n=${2:?} url host path owner repo
+  url=$(cd "$wt" && git remote get-url origin 2>/dev/null) || return 1
+  case "$url" in
+    git@*) host=${url#git@}; host=${host%%:*}; path=${url#*:} ;;
+    https://*) path=${url#https://}; path=${path#*@}; host=${path%%/*}; path=${path#*/} ;;
+    *) return 1 ;;
+  esac
+  owner=${path%%/*}
+  repo=${path#*/}; repo=${repo%%/*}; repo=${repo%.git}
+  [ -n "$host" ] && [ -n "$owner" ] && [ -n "$repo" ] || return 1
+  case "$host" in
+    github.com) printf 'https://%s/%s/%s/pull/%s' "$host" "$owner" "$repo" "$n" ;;
+    *) printf 'https://%s/%s/%s/pulls/%s' "$host" "$owner" "$repo" "$n" ;;
   esac
 }
