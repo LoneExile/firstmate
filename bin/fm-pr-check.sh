@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Record a PR-ready task: store one validated canonical pr=<url> and GitHub's
-# exact pr_head=<sha> when available, then atomically arm a static merge poll.
+# Record a PR-ready task: store one validated canonical pr=<url> and the exact
+# pr_head=<sha> when available, then atomically arm a static merge poll.
 # The watcher check source is byte-for-byte bin/fm-pr-poll.sh; task and PR data
 # live only in a private sidecar and are never interpolated into shell source.
+#
+# Host-agnostic: a GitHub PR (https://github.com/<o>/<r>/pull/<n>) is looked up
+# with gh; a Gitea PR (https://<host>/<o>/<r>/pulls/<n>) is looked up through the
+# Gitea REST API. Head and merge-state lookups go through bin/fm-pr-host-lib.sh,
+# so both this recorder and the static poll work for either host.
 # Usage: fm-pr-check.sh <task-id> <pr-url>
 set -eu
 
@@ -13,6 +18,8 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-pr-host-lib.sh
+. "$SCRIPT_DIR/fm-pr-host-lib.sh"
 
 if [ "$#" -ne 2 ]; then
   echo "error: invalid PR check request" >&2
@@ -42,10 +49,12 @@ fi
 "$SCRIPT_DIR/fm-pr-check-migrate.sh" --checks-safe || exit 1
 "$FM_ROOT/bin/fm-guard.sh" || true
 
+# Host-aware PR head lookup (github -> gh, gitea -> Gitea REST API). A missing
+# client, missing token, or lookup error simply leaves pr_head unrecorded.
 WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
 PR_HEAD=
-if [ -n "$WT" ] && [ -d "$WT" ] && command -v gh >/dev/null 2>&1; then
-  if REMOTE_HEAD=$(cd "$WT" && gh pr view "$URL" --json headRefOid -q .headRefOid 2>/dev/null) \
+if [ -n "$WT" ] && [ -d "$WT" ]; then
+  if REMOTE_HEAD=$(fm_pr_view_head "$URL" "$WT" 2>/dev/null) \
     && fm_pr_head_valid "$REMOTE_HEAD"; then
     PR_HEAD=$REMOTE_HEAD
   fi
