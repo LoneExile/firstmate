@@ -18,6 +18,13 @@
 #   3. a userinfo token embedded in a matching-host https remote of the given worktree
 #      (e.g. an https://<user>:<token>@<host>/... remote the crewmate already pushes to)
 #
+# Sources 1 and 2 are bound to the explicitly configured Gitea host
+# ($FM_GITEA_HOST, else $FM_HOME/config/gitea-host or $FM_ROOT/config/gitea-host):
+# they resolve ONLY when the target host equals that configured host, so a
+# crewmate-reported PR URL for any other host can never receive the captain's
+# PAT as an Authorization header. Without a configured host they never resolve
+# (fail closed); source 3 is inherently host-matched and needs no binding.
+#
 # Gitea calls need `curl` and `jq`. If either is missing, or no token resolves,
 # the gitea path returns non-zero so callers fall back exactly as they do on a
 # gh lookup error (fail-safe: never claim work is landed on an inconclusive read).
@@ -84,22 +91,45 @@ fm_pr_parse() {  # <pr-url>
   return 0
 }
 
-# Resolve a Gitea API token. Echoes the token or returns non-zero. The worktree
-# remote fallback only yields a token from a remote whose host equals <host>,
-# so a PAT for one host can never be sent to another host's API.
-fm_gitea_token() {  # [worktree] [host]
-  local wt=${1:-} host=${2:-} f u remotes auth userinfo
-  if [ -n "${FM_GITEA_TOKEN:-}" ]; then
-    printf '%s' "$FM_GITEA_TOKEN"
+# The explicitly configured Gitea host, the ONLY host the env/config token
+# sources may be sent to. Echoes the host or returns non-zero when unconfigured.
+fm_gitea_configured_host() {
+  local f
+  if [ -n "${FM_GITEA_HOST:-}" ]; then
+    printf '%s' "$FM_GITEA_HOST"
     return 0
   fi
-  for f in "${FM_HOME:-}/config/gitea-token" "${FM_ROOT:-}/config/gitea-token"; do
-    case "$f" in /config/gitea-token) continue ;; esac
+  for f in "${FM_HOME:-}/config/gitea-host" "${FM_ROOT:-}/config/gitea-host"; do
+    case "$f" in /config/gitea-host) continue ;; esac
     if [ -f "$f" ]; then
       tr -d ' \t\r\n' < "$f"
       return 0
     fi
   done
+  return 1
+}
+
+# Resolve a Gitea API token. Echoes the token or returns non-zero. Every source
+# is host-bound: the env/config sources resolve only for the explicitly
+# configured Gitea host (see header), and the worktree remote fallback only
+# yields a token from a remote whose host equals <host>, so a PAT for one host
+# can never be sent to another host's API.
+fm_gitea_token() {  # [worktree] [host]
+  local wt=${1:-} host=${2:-} f u remotes auth userinfo cfg_host
+  cfg_host=$(fm_gitea_configured_host) || cfg_host=""
+  if [ -n "$cfg_host" ] && [ -n "$host" ] && [ "$host" = "$cfg_host" ]; then
+    if [ -n "${FM_GITEA_TOKEN:-}" ]; then
+      printf '%s' "$FM_GITEA_TOKEN"
+      return 0
+    fi
+    for f in "${FM_HOME:-}/config/gitea-token" "${FM_ROOT:-}/config/gitea-token"; do
+      case "$f" in /config/gitea-token) continue ;; esac
+      if [ -f "$f" ]; then
+        tr -d ' \t\r\n' < "$f"
+        return 0
+      fi
+    done
+  fi
   if [ -n "$wt" ] && [ -d "$wt" ] && [ -n "$host" ]; then
     remotes=$(cd "$wt" && git remote -v 2>/dev/null | awk '$3=="(fetch)"{print $2}')
     while IFS= read -r u; do

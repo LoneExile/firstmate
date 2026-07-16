@@ -725,14 +725,15 @@ validate_spawn_worktree() {  # <source> <inspect-target>
 # valid isolated worktree. Walk up superprojects until none remains. For a repo with
 # no submodules the first --show-superproject-working-tree is empty, so this returns
 # the path unchanged: a safe no-op for every backend/repo.
-resolve_worktree_root() {  # <path> -> outermost superproject working tree (physical)
-  local d up
+resolve_worktree_root() {  # <path> -> outermost superproject working tree
+  local d up out=$1
   d=$(cd "$1" 2>/dev/null && pwd -P) || return 1
   while up=$(git -C "$d" rev-parse --show-superproject-working-tree 2>/dev/null) && [ -n "$up" ]; do
     up=$(cd "$up" 2>/dev/null && pwd -P) || break
     d=$up
+    out=$d
   done
-  printf '%s\n' "$d"
+  printf '%s\n' "$out"
 }
 
 W="fm-$ID"

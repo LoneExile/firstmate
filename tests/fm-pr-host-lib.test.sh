@@ -65,6 +65,9 @@ SH
 chmod +x "$FAKEBIN/curl" "$FAKEBIN/gh" "$FAKEBIN/gh-axi"
 export PATH="$FAKEBIN:$PATH"
 export FM_GITEA_TOKEN=testtoken
+# The env/config token sources are bound to the explicitly configured host;
+# every Gitea fixture in this file lives on private-git.ocin.cloud.
+export FM_GITEA_HOST=private-git.ocin.cloud
 
 # Worktree fixtures with distinct origins (real repos so git remote get-url works).
 GITEA_WT="$TMP_ROOT/gitea-wt"
@@ -165,6 +168,28 @@ test_gitea_token_requires_matching_host() {
   pass "fm_gitea_token remote fallback only yields a token whose remote host matches"
 }
 
+test_gitea_env_config_token_bound_to_configured_host() {
+  local tok cfgdir="$TMP_ROOT/cfg-home"
+  tok=$(fm_gitea_token "$GITEA_WT" private-git.ocin.cloud) \
+    || fail "token: env token did not resolve for the configured host"
+  [ "$tok" = testtoken ] || fail "token: wrong env token for configured host ($tok)"
+  fm_gitea_token "" attacker.example >/dev/null 2>&1 \
+    && fail "token: env token must never be sent to a non-configured host"
+  (unset FM_GITEA_HOST; fm_gitea_token "" private-git.ocin.cloud) >/dev/null 2>&1 \
+    && fail "token: env token must not resolve when no Gitea host is explicitly configured"
+  mkdir -p "$cfgdir/config"
+  printf 'file_tok\n' > "$cfgdir/config/gitea-token"
+  printf 'private-git.ocin.cloud\n' > "$cfgdir/config/gitea-host"
+  tok=$(unset FM_GITEA_TOKEN FM_GITEA_HOST; FM_HOME="$cfgdir" FM_ROOT="$cfgdir" \
+    fm_gitea_token "" private-git.ocin.cloud) \
+    || fail "token: config-file token did not resolve for the config-file host"
+  [ "$tok" = file_tok ] || fail "token: wrong config-file token ($tok)"
+  (unset FM_GITEA_TOKEN FM_GITEA_HOST; FM_HOME="$cfgdir" FM_ROOT="$cfgdir" \
+    fm_gitea_token "" attacker.example) >/dev/null 2>&1 \
+    && fail "token: config-file token must never be sent to a non-configured host"
+  pass "fm_gitea_token env/config sources are bound to the explicitly configured Gitea host"
+}
+
 test_url_from_worktree() {
   [ "$(fm_pr_url_from_worktree "$GITEA_WT" 88)" = "https://private-git.ocin.cloud/OpenCloud/core/pulls/88" ] \
     || fail "url_from_worktree: gitea https origin -> wrong URL"
@@ -224,6 +249,7 @@ test_gitea_merge_posts_squash
 test_github_uses_gh_not_curl
 test_github_url_ref_survives_missing_worktree
 test_gitea_token_requires_matching_host
+test_gitea_env_config_token_bound_to_configured_host
 test_url_from_worktree
 test_url_from_worktree_ssh
 test_gitea_number_from_branch
