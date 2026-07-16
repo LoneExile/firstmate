@@ -57,9 +57,10 @@ fm_pr_parse() {  # <pr-url>
   rest=${rest#*/}
   PR_REPO=${rest%%/*}
   rest=${rest#*/}
-  case "$rest" in
-    pulls/*) rest=${rest#pulls/} ;;
-    pull/*) rest=${rest#pull/} ;;
+  # Path segment is per-host: GitHub emits /pull/, Gitea /pulls/ (see header).
+  case "$PR_HOST/$rest" in
+    github/pull/*) rest=${rest#pull/} ;;
+    gitea/pulls/*) rest=${rest#pulls/} ;;
     *) return 1 ;;
   esac
   PR_NUMBER=${rest%%/*}
@@ -68,8 +69,17 @@ fm_pr_parse() {  # <pr-url>
   # (matches the old parse_pr_url regex '/pull/([0-9]+)/?$').
   case "$rest" in "$PR_NUMBER"|"$PR_NUMBER/") ;; *) return 1 ;; esac
   # Strict owner/repo validation (preserves the old GitHub-only parse's safety;
-  # rejects unsafe segments like command-substitution or path traversal for both hosts).
-  case "$PR_OWNER" in ''|-*|*-) return 1 ;; *[!A-Za-z0-9-]*) return 1 ;; esac
+  # rejects unsafe segments like command-substitution or path traversal for both
+  # hosts). Owner charset is per-host: GitHub allows [A-Za-z0-9-]; Gitea also
+  # allows '.' and '_'. Neither allows leading/trailing separators.
+  case "$PR_HOST" in
+    gitea)
+      case "$PR_OWNER" in ''|[._-]*|*[._-]) return 1 ;; *[!A-Za-z0-9._-]*) return 1 ;; esac
+      ;;
+    *)
+      case "$PR_OWNER" in ''|-*|*-) return 1 ;; *[!A-Za-z0-9-]*) return 1 ;; esac
+      ;;
+  esac
   case "$PR_REPO" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
   return 0
 }

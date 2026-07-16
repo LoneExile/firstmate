@@ -93,6 +93,10 @@ test_parse_accepts_both_hosts() {
   [ "$PR_OWNER/$PR_REPO#$PR_NUMBER" = "OpenCloud/core#70" ] \
     || fail "parse: gitea fields wrong ($PR_OWNER/$PR_REPO#$PR_NUMBER)"
   fm_pr_parse "$GH_PR/42/" || fail "parse: rejected a single-trailing-slash URL"
+  fm_pr_parse "https://private-git.ocin.cloud/my_org.unit/core/pulls/9" \
+    || fail "parse: rejected a Gitea owner containing '_' and '.'"
+  [ "$PR_OWNER#$PR_NUMBER" = "my_org.unit#9" ] \
+    || fail "parse: gitea '_'/'.' owner fields wrong ($PR_OWNER#$PR_NUMBER)"
   pass "fm_pr_parse accepts GitHub /pull/ and Gitea /pulls/ URLs with correct fields"
 }
 
@@ -107,6 +111,11 @@ test_parse_rejects_unsafe_and_malformed() {
     'https://github.com/owner/repo/pull/abc' \
     'https://github.com/owner/repo/pull/1/$(id)' \
     'https://github.com/owner/repo/pull/1/files' \
+    'https://github.com/owner/repo/pulls/7' \
+    'https://github.com/my_org/repo/pull/1' \
+    'https://private-git.ocin.cloud/OpenCloud/core/pull/70' \
+    'https://private-git.ocin.cloud/_org/core/pulls/1' \
+    'https://private-git.ocin.cloud/org./core/pulls/1' \
     'https://private-git.ocin.cloud/OpenCloud/core/pulls/70/commits' \
     'https://gitlab.com/example/repo/-/merge_requests/1'; do
     if fm_pr_parse "$u"; then fail "parse: accepted unsafe/malformed URL: $u"; fi
