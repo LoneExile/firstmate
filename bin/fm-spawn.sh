@@ -736,6 +736,24 @@ validate_spawn_worktree() {  # <source> <inspect-target>
   fi
 }
 
+# Resolve a captured pane cwd UP to the outermost git worktree root. treehouse's
+# post_create hooks (recursive `git submodule update`, seed scripts) can transiently
+# leave the pane cwd INSIDE a nested submodule while provisioning, so the raw cwd may
+# be a submodule dir (e.g. <wt>/cozystack/libs/kubeovn-chart), not the treehouse
+# worktree root - and validate_spawn_worktree would accept that submodule root as a
+# valid isolated worktree. Walk up superprojects until none remains. For a repo with
+# no submodules the first --show-superproject-working-tree is empty, so this returns
+# the path unchanged: a safe no-op for every backend/repo.
+resolve_worktree_root() {  # <path> -> outermost superproject working tree (physical)
+  local d up
+  d=$(cd "$1" 2>/dev/null && pwd -P) || return 1
+  while up=$(git -C "$d" rev-parse --show-superproject-working-tree 2>/dev/null) && [ -n "$up" ]; do
+    up=$(cd "$up" 2>/dev/null && pwd -P) || break
+    d=$up
+  done
+  printf '%s\n' "$d"
+}
+
 W="fm-$ID"
 case "$BACKEND" in
   tmux)
@@ -891,9 +909,15 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # PROJ_ABS on the very first poll, before the pane has actually moved.
   for _ in $(seq 1 60); do
     p=$(spawn_current_path "$WT_TARGET" || true)
-    if [ -n "$p" ] && [ "$(real_path_or_raw "$p")" != "$PROJ_ABS_REAL" ]; then
-      WT="$p"
-      break
+    if [ -n "$p" ]; then
+      # Resolve up to the worktree root: the pane may transiently sit in a nested
+      # submodule while treehouse's post_create hooks run (see resolve_worktree_root),
+      # so the raw cwd can be a submodule dir rather than the worktree root.
+      root=$(resolve_worktree_root "$p" 2>/dev/null || true)
+      if [ -n "$root" ] && [ "$(real_path_or_raw "$root")" != "$PROJ_ABS_REAL" ]; then
+        WT="$root"
+        break
+      fi
     fi
     sleep 1
   done
