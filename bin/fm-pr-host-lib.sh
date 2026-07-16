@@ -57,10 +57,16 @@ fm_pr_parse() {  # <pr-url>
   rest=${rest#*/}
   PR_REPO=${rest%%/*}
   rest=${rest#*/}
-  rest=${rest#pulls/}
-  rest=${rest#pull/}
+  case "$rest" in
+    pulls/*) rest=${rest#pulls/} ;;
+    pull/*) rest=${rest#pull/} ;;
+    *) return 1 ;;
+  esac
   PR_NUMBER=${rest%%/*}
   case "$PR_NUMBER" in ''|*[!0-9]*) return 1 ;; esac
+  # Anchored: nothing may follow the PR number except a single trailing slash
+  # (matches the old parse_pr_url regex '/pull/([0-9]+)/?$').
+  case "$rest" in "$PR_NUMBER"|"$PR_NUMBER/") ;; *) return 1 ;; esac
   # Strict owner/repo validation (preserves the old GitHub-only parse's safety;
   # rejects unsafe segments like command-substitution or path traversal for both hosts).
   case "$PR_OWNER" in ''|-*|*-) return 1 ;; *[!A-Za-z0-9-]*) return 1 ;; esac
@@ -68,9 +74,11 @@ fm_pr_parse() {  # <pr-url>
   return 0
 }
 
-# Resolve a Gitea API token. Echoes the token or returns non-zero.
-fm_gitea_token() {  # [worktree]
-  local wt=${1:-} f u userinfo
+# Resolve a Gitea API token. Echoes the token or returns non-zero. The worktree
+# remote fallback only yields a token from a remote whose host equals <host>,
+# so a PAT for one host can never be sent to another host's API.
+fm_gitea_token() {  # [worktree] [host]
+  local wt=${1:-} host=${2:-} f u remotes auth userinfo
   if [ -n "${FM_GITEA_TOKEN:-}" ]; then
     printf '%s' "$FM_GITEA_TOKEN"
     return 0
@@ -82,15 +90,19 @@ fm_gitea_token() {  # [worktree]
       return 0
     fi
   done
-  if [ -n "$wt" ] && [ -d "$wt" ]; then
-    u=$(cd "$wt" && git remote -v 2>/dev/null | awk '$3=="(fetch)"{print $2}' | grep -m1 '^https://[^/]*@' || true)
-    if [ -n "$u" ]; then
-      userinfo=${u#https://}
-      userinfo=${userinfo%%@*}
+  if [ -n "$wt" ] && [ -d "$wt" ] && [ -n "$host" ]; then
+    remotes=$(cd "$wt" && git remote -v 2>/dev/null | awk '$3=="(fetch)"{print $2}')
+    while IFS= read -r u; do
+      case "$u" in https://*) ;; *) continue ;; esac
+      auth=${u#https://}
+      auth=${auth%%/*}
+      case "$auth" in *@*) ;; *) continue ;; esac
+      [ "${auth#*@}" = "$host" ] || continue
+      userinfo=${auth%%@*}
       case "$userinfo" in
         *:*) printf '%s' "${userinfo#*:}"; return 0 ;;
       esac
-    fi
+    done <<<"$remotes"
   fi
   return 1
 }
@@ -135,19 +147,32 @@ _fm_pr_pr_url() {  # <ref> [worktree]
   esac
 }
 
+# cd into the worktree for gh repo context: strict for a bare-number ref (gh
+# cannot resolve it without the repo), best-effort for a URL ref (the URL is
+# self-sufficient, so a missing/moved worktree degrades to a URL-only lookup
+# instead of failing every poll).
+_fm_pr_cd_wt() {  # <ref> [worktree]
+  local ref=$1 wt=${2:-}
+  [ -n "$wt" ] || return 0
+  case "$ref" in
+    http://*|https://*) cd "$wt" 2>/dev/null || true ;;
+    *) cd "$wt" ;;
+  esac
+}
+
 # Echo the normalized PR state: MERGED|OPEN|CLOSED (matching gh's vocabulary).
 # Returns non-zero on any lookup failure.
 fm_pr_view_state() {  # <pr-url-or-number> [worktree]
   local ref=${1:?} wt=${2:-} url tok json
   case "$(_fm_pr_ref_host "$ref" "$wt")" in
     github)
-      ( [ -z "$wt" ] || cd "$wt" || exit 1; gh pr view "$ref" --json state -q .state 2>/dev/null )
+      ( _fm_pr_cd_wt "$ref" "$wt" || exit 1; gh pr view "$ref" --json state -q .state 2>/dev/null )
       ;;
     gitea)
       command -v jq >/dev/null 2>&1 || return 1
       url=$(_fm_pr_pr_url "$ref" "$wt") || return 1
       fm_pr_parse "$url" || return 1
-      tok=$(fm_gitea_token "$wt") || return 1
+      tok=$(fm_gitea_token "$wt" "${PR_BASE#https://}") || return 1
       json=$(_fm_gitea_curl "$tok" GET "$PR_BASE/api/v1/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER") || return 1
       printf '%s' "$json" | jq -r 'if .merged then "MERGED" elif .state=="open" then "OPEN" else "CLOSED" end' 2>/dev/null
       ;;
@@ -160,13 +185,13 @@ fm_pr_view_head() {  # <pr-url-or-number> [worktree]
   local ref=${1:?} wt=${2:-} url tok json
   case "$(_fm_pr_ref_host "$ref" "$wt")" in
     github)
-      ( [ -z "$wt" ] || cd "$wt" || exit 1; gh pr view "$ref" --json headRefOid -q .headRefOid 2>/dev/null )
+      ( _fm_pr_cd_wt "$ref" "$wt" || exit 1; gh pr view "$ref" --json headRefOid -q .headRefOid 2>/dev/null )
       ;;
     gitea)
       command -v jq >/dev/null 2>&1 || return 1
       url=$(_fm_pr_pr_url "$ref" "$wt") || return 1
       fm_pr_parse "$url" || return 1
-      tok=$(fm_gitea_token "$wt") || return 1
+      tok=$(fm_gitea_token "$wt" "${PR_BASE#https://}") || return 1
       json=$(_fm_gitea_curl "$tok" GET "$PR_BASE/api/v1/repos/$PR_OWNER/$PR_REPO/pulls/$PR_NUMBER") || return 1
       printf '%s' "$json" | jq -r '.head.sha // empty' 2>/dev/null
       ;;
@@ -198,7 +223,7 @@ fm_pr_number_from_branch() {  # <worktree> <branch> [pr-url-for-host-hint]
       owner=${path%%/*}
       repo=${path#*/}; repo=${repo%%/*}; repo=${repo%.git}
       [ -n "$owner" ] && [ -n "$repo" ] || return 1
-      tok=$(fm_gitea_token "$wt") || return 1
+      tok=$(fm_gitea_token "$wt" "${base#https://}") || return 1
       json=$(_fm_gitea_curl "$tok" GET "$base/api/v1/repos/$owner/$repo/pulls?state=all&limit=50") || return 1
       local n
       n=$(printf '%s' "$json" | jq -r --arg b "$branch" 'map(select(.head.ref==$b)) | .[0].number // empty' 2>/dev/null)
@@ -229,7 +254,7 @@ fm_pr_merge() {  # <pr-url> <method> [worktree] [-- <extra gh-axi args>]
       ;;
     gitea)
       fm_pr_parse "$url" || return 1
-      local tok; tok=$(fm_gitea_token "$wt") || return 1
+      local tok; tok=$(fm_gitea_token "$wt" "${PR_BASE#https://}") || return 1
       local do_val
       case "$method" in
         squash) do_val=squash ;;

@@ -92,6 +92,7 @@ test_parse_accepts_both_hosts() {
   fm_pr_parse "$GITEA_PR/70" || fail "parse: rejected a valid Gitea /pulls/ URL"
   [ "$PR_OWNER/$PR_REPO#$PR_NUMBER" = "OpenCloud/core#70" ] \
     || fail "parse: gitea fields wrong ($PR_OWNER/$PR_REPO#$PR_NUMBER)"
+  fm_pr_parse "$GH_PR/42/" || fail "parse: rejected a single-trailing-slash URL"
   pass "fm_pr_parse accepts GitHub /pull/ and Gitea /pulls/ URLs with correct fields"
 }
 
@@ -104,6 +105,9 @@ test_parse_rejects_unsafe_and_malformed() {
     'https://github.com/-owner/repo/pull/1' \
     'https://github.com/owner/re po/pull/1' \
     'https://github.com/owner/repo/pull/abc' \
+    'https://github.com/owner/repo/pull/1/$(id)' \
+    'https://github.com/owner/repo/pull/1/files' \
+    'https://private-git.ocin.cloud/OpenCloud/core/pulls/70/commits' \
     'https://gitlab.com/example/repo/-/merge_requests/1'; do
     if fm_pr_parse "$u"; then fail "parse: accepted unsafe/malformed URL: $u"; fi
   done
@@ -131,6 +135,25 @@ test_github_uses_gh_not_curl() {
   [ "$(fm_pr_view_state "$GH_PR/5" "$GH_WT")" = MERGED ] || fail "github: view_state did not use gh"
   assert_no_grep 'github.com' "$FM_TEST_CURL_LOG" "github: state lookup leaked to curl"
   pass "fm_pr_view_state dispatches GitHub via gh, never curl"
+}
+
+test_github_url_ref_survives_missing_worktree() {
+  [ "$(fm_pr_view_state "$GH_PR/5" "$TMP_ROOT/gone-wt")" = MERGED ] \
+    || fail "github: URL ref with missing worktree must degrade to URL-only gh lookup"
+  pass "fm_pr_view_state URL ref survives a missing worktree (merge poll cannot silently stall)"
+}
+
+test_gitea_token_requires_matching_host() {
+  local wt="$TMP_ROOT/mixed-remote-wt" tok
+  git init -q "$wt"
+  git -C "$wt" remote add origin "https://x-access-token:ghp_github@github.com/o/r.git"
+  git -C "$wt" remote add gitea "https://apinant:gitea_tok@private-git.ocin.cloud/OpenCloud/core.git"
+  tok=$(unset FM_GITEA_TOKEN; FM_HOME="$TMP_ROOT" FM_ROOT="$TMP_ROOT" fm_gitea_token "$wt" private-git.ocin.cloud) \
+    || fail "token: matching-host remote token did not resolve"
+  [ "$tok" = gitea_tok ] || fail "token: resolved wrong token ($tok)"
+  (unset FM_GITEA_TOKEN; FM_HOME="$TMP_ROOT" FM_ROOT="$TMP_ROOT" fm_gitea_token "$wt" other-gitea.example) >/dev/null 2>&1 \
+    && fail "token: a remote token for another host must not leak to the target host"
+  pass "fm_gitea_token remote fallback only yields a token whose remote host matches"
 }
 
 test_url_from_worktree() {
@@ -190,6 +213,8 @@ test_parse_rejects_unsafe_and_malformed
 test_gitea_state_head
 test_gitea_merge_posts_squash
 test_github_uses_gh_not_curl
+test_github_url_ref_survives_missing_worktree
+test_gitea_token_requires_matching_host
 test_url_from_worktree
 test_url_from_worktree_ssh
 test_gitea_number_from_branch
