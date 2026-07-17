@@ -52,15 +52,20 @@ detect_own() {
       pi) echo pi; return ;;
       omp) echo omp; return ;;
       node*|python*|bun*)
-        # Bare interpreter: match the harness name in its script path.
+        # Bare interpreter: match the harness name as a path-final component or a
+        # space-delimited word in its args, mirroring fm-lock.sh's (^|/| )name( |$)
+        # word-boundary semantics. A live omp/pi runs as `bun`/`node` with the
+        # harness at `.../omp` or `.../pi` (verified 2026-07-17: a live omp tmux
+        # pane reports pane_current_command=bun with args `bun /…/omp …`), so the
+        # match must also accept a trailing-flag form like `.../omp --auto-approve`.
         args=$(ps -o args= -p "$pid" 2>/dev/null)
         case "$args" in
           *claude*) echo claude; return ;;
           *codex*) echo codex; return ;;
           *opencode*) echo opencode; return ;;
           *grok*) echo grok; return ;;
-          *" pi "*|*/pi) echo pi; return ;;
-          *" omp "*|*/omp) echo omp; return ;;
+          */pi|*"/pi "*|*" pi"|*" pi "*) echo pi; return ;;
+          */omp|*"/omp "*|*" omp"|*" omp "*) echo omp; return ;;
         esac ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
