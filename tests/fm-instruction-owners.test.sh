@@ -16,10 +16,11 @@ SECONDMATE="$ROOT/.agents/skills/secondmate-provisioning/SKILL.md"
 CONFIG="$ROOT/docs/configuration.md"
 AGENTS="$ROOT/AGENTS.md"
 BRIEF="$ROOT/bin/fm-brief.sh"
+CAP="$ROOT/.agents/skills/captain-parallel-digest/SKILL.md"
 
 test_new_skill_metadata_and_triggers() {
   local skill name count
-  for pair in "diagnostic-reasoning:$DIAG" "project-management:$PROJECT"; do
+  for pair in "diagnostic-reasoning:$DIAG" "project-management:$PROJECT" "captain-parallel-digest:$CAP"; do
     name=${pair%%:*}
     skill=${pair#*:}
     assert_present "$skill" "$name skill is missing"
@@ -38,6 +39,23 @@ test_new_skill_metadata_and_triggers() {
   assert_grep '`project-management` - load before adding, creating, removing, or initializing a project.' "$ROOT/AGENTS.md" \
     "AGENTS.md lost the project-management trigger"
   pass "new internal skills have one precise AGENTS.md trigger each"
+}
+
+test_captain_parallel_digest_owner_covers_safe_delegation() {
+  assert_grep 'omp-only capability because it relies on omp subagents' "$CAP" \
+    "captain-parallel-digest skill lost its omp-only scoping"
+  assert_grep 'Delegate only read-only analysis that returns text and touches no shared state.' "$CAP" \
+    "captain-parallel-digest skill lost the read-only delegation boundary"
+  assert_grep 'Never let a subagent take an authoritative or state-changing action.' "$CAP" \
+    "captain-parallel-digest skill lost the never-delegate rule"
+  for owned in 'Spawning or steering crew' 'Merging, landing, or tearing down' 'Resolving or routing decision-holds' 'Writing shared state' 'The single live supervision cycle'; do
+    assert_grep "$owned" "$CAP" "captain-parallel-digest skill lost a captain-only action: $owned"
+  done
+  assert_grep 'load on omp only' "$AGENTS" \
+    "AGENTS.md lost the captain-parallel-digest omp-only trigger"
+  assert_no_grep 'Fan out one read-only scout subagent per item' "$AGENTS" \
+    "AGENTS.md duplicates the fan-out procedure the skill owns"
+  pass "captain-parallel-digest keeps read-only delegation, captain-serialized actions, and one-owner placement"
 }
 
 test_diagnostic_owner_covers_causal_procedure() {
@@ -222,6 +240,7 @@ test_compressed_agents_retains_authority_and_supervision_safety() {
 }
 
 test_new_skill_metadata_and_triggers
+test_captain_parallel_digest_owner_covers_safe_delegation
 test_diagnostic_owner_covers_causal_procedure
 test_project_management_owner_covers_guarded_operations
 test_generic_effort_fallback_respects_precedence
