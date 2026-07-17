@@ -32,6 +32,8 @@ codex|secondmate|codex __MODELFLAG____EFFORTFLAG__--dangerously-bypass-approvals
 opencode|ship|OPENCODE_CONFIG_CONTENT='{"permission":{"*":"allow"}}' opencode __MODELFLAG__--prompt "$(cat __BRIEF__)"
 pi|ship|pi __MODELFLAG____EFFORTFLAG__-e __PIEXT__ "$(cat __BRIEF__)"
 pi|secondmate|pi __MODELFLAG____EFFORTFLAG__-e __PITURNEND__ -e __PIWATCH__ "$(cat __BRIEF__)"
+omp|ship|omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(cat __BRIEF__)"
+omp|secondmate|omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPTURNEND__ -e __OMPWATCH__ "$(cat __BRIEF__)"
 grok|ship|grok --always-approve __MODELFLAG____EFFORTFLAG__"$(cat __BRIEF__)"
 ROWS
 }
@@ -102,7 +104,7 @@ test_absent_gate_keeps_final_commands_byte_identical() {
   fm_git_worktree "$project" "$wt" baseline-worktree
   fakebin=$(make_spawn_fakebin "$world/fake")
 
-  for harness in claude codex opencode pi grok; do
+  for harness in claude codex opencode pi grok omp; do
     id="agent-secrets-${harness}-z1"
     mkdir -p "$home/data/$id"
     printf '%s\n' 'brief' > "$home/data/$id/brief.md"
@@ -124,13 +126,16 @@ test_absent_gate_keeps_final_commands_byte_identical() {
       grok)
         expected="grok --always-approve \"\$(cat '$home/data/$id/brief.md')\""
         ;;
+      omp)
+        expected="omp --auto-approve -e '$home/state/$id.omp-ext.ts' \"\$(cat '$home/data/$id/brief.md')\""
+        ;;
     esac
     actual=$(cat "$launchlog")
     [ "$actual" = "$expected" ] \
       || fail "$harness absent-gate final command changed"$'\n'"expected: $expected"$'\n'"actual:   $actual"
   done
 
-  for harness in codex pi; do
+  for harness in codex pi omp; do
     id="agent-secrets-${harness}-secondmate-z2"
     secondmate="$world/$id"
     make_secondmate_home "$secondmate" "$id"
@@ -143,6 +148,9 @@ test_absent_gate_keeps_final_commands_byte_identical() {
         ;;
       pi)
         expected="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_HOME='$secondmate_real' pi -e '$secondmate_real/.pi/extensions/fm-primary-turnend-guard.ts' -e '$secondmate_real/.pi/extensions/fm-primary-pi-watch.ts' \"\$(cat '$secondmate_real/data/charter.md')\""
+        ;;
+      omp)
+        expected="FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_HOME='$secondmate_real' omp --auto-approve -e '$secondmate_real/.omp/extensions/fm-primary-turnend-guard.ts' -e '$secondmate_real/.omp/extensions/fm-primary-omp-watch.ts' \"\$(cat '$secondmate_real/data/charter.md')\""
         ;;
     esac
     actual=$(cat "$launchlog")
@@ -165,7 +173,7 @@ test_launch_template_baselines() {
     [ "$got" = "$expected" ] \
       || fail "$harness/$kind baseline changed"$'\n'"expected: $expected"$'\n'"actual:   $got"
   done < <(launch_template_baselines)
-  [ "$count" -eq 7 ] || fail "expected seven verified launch-template rows, got $count"
+  [ "$count" -eq 9 ] || fail "expected nine verified launch-template rows, got $count"
   pass "all verified harness templates match the pre-injection byte baseline"
 }
 
@@ -228,7 +236,7 @@ assert_templates_for_gate() {
     [ "$got" = "$expected" ] \
       || fail "$label: $harness/$kind launch mismatch"$'\n'"expected: $expected"$'\n'"actual:   $got"
   done < <(launch_template_baselines)
-  [ "$count" -eq 7 ] || fail "$label: expected seven verified launch-template rows, got $count"
+  [ "$count" -eq 9 ] || fail "$label: expected nine verified launch-template rows, got $count"
 }
 
 test_all_presence_conditions_enable_prefix() {
