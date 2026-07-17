@@ -60,6 +60,6 @@ cat > "$TMP_ROOT/tsconfig.json" <<'JSON'
 }
 JSON
 
-tsc -p "$TMP_ROOT/tsconfig.json"
+tsc -p "$TMP_ROOT/tsconfig.json" || { printf 'not ok - OMP primary extensions failed strict typecheck\n' >&2; exit 1; }
 version=$(jq -r '.version' "$OMP_PACKAGE_DIR/package.json" 2>/dev/null || printf 'unknown')
 printf 'ok - OMP primary extensions pass strict no-emit typecheck against OMP %s\n' "$version"
