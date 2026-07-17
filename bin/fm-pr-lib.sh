@@ -62,20 +62,39 @@ fm_task_id_creation_valid() {
 }
 
 fm_pr_url_parse() {
-  local raw=${1-} pattern
+  local raw=${1-} owner_pat repo_pat host_pat
   local LC_ALL=C
   FM_PR_URL=
   FM_PR_OWNER=
   FM_PR_REPO=
   FM_PR_NUMBER=
-  pattern='^https://github\.com/([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,37}[A-Za-z0-9])/([A-Za-z0-9._-]{1,100})/pull/([1-9][0-9]*)$'
-  [[ "$raw" =~ $pattern ]] || return 1
-  [[ "${BASH_REMATCH[1]}" != *--* ]] || return 1
-  [ "${BASH_REMATCH[2]}" != . ] && [ "${BASH_REMATCH[2]}" != .. ] || return 1
+  owner_pat='([A-Za-z0-9]|[A-Za-z0-9][A-Za-z0-9-]{0,37}[A-Za-z0-9])'
+  repo_pat='([A-Za-z0-9._-]{1,100})'
+  # Hostname: dot-separated alnum/hyphen labels, optional :port. No shell
+  # metacharacters, no path separators, so it cannot smuggle unsafe segments.
+  host_pat='([A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?)'
+  if [[ "$raw" =~ ^https://github\.com/$owner_pat/$repo_pat/pull/([1-9][0-9]*)$ ]]; then
+    # GitHub PR URL (parse unchanged): owner=1, repo=2, number=3.
+    [[ "${BASH_REMATCH[1]}" != *--* ]] || return 1
+    [ "${BASH_REMATCH[2]}" != . ] && [ "${BASH_REMATCH[2]}" != .. ] || return 1
+    FM_PR_OWNER=${BASH_REMATCH[1]}
+    FM_PR_REPO=${BASH_REMATCH[2]}
+    FM_PR_NUMBER=${BASH_REMATCH[3]}
+  elif [[ "$raw" =~ ^https://$host_pat/$owner_pat/$repo_pat/pulls/([1-9][0-9]*)$ ]]; then
+    # Gitea PR URL https://<host>/<owner>/<repo>/pulls/<n>. host_pat occupies
+    # capture groups 1-3, so owner=4, repo=5, number=6. Same strict owner/repo
+    # validation as GitHub. A github.com host here is malformed (GitHub uses
+    # /pull/), so reject it rather than route it to the Gitea API.
+    [ "${BASH_REMATCH[1]}" != github.com ] || return 1
+    [[ "${BASH_REMATCH[4]}" != *--* ]] || return 1
+    [ "${BASH_REMATCH[5]}" != . ] && [ "${BASH_REMATCH[5]}" != .. ] || return 1
+    FM_PR_OWNER=${BASH_REMATCH[4]}
+    FM_PR_REPO=${BASH_REMATCH[5]}
+    FM_PR_NUMBER=${BASH_REMATCH[6]}
+  else
+    return 1
+  fi
   FM_PR_URL=$raw
-  FM_PR_OWNER=${BASH_REMATCH[1]}
-  FM_PR_REPO=${BASH_REMATCH[2]}
-  FM_PR_NUMBER=${BASH_REMATCH[3]}
 }
 
 fm_pr_head_valid() {
