@@ -147,11 +147,11 @@ fm_backend_tmux_current_command() {  # <target>
 #             own process name, never wrapped by a generic interpreter).
 #   dead    - the foreground command is a bare shell: nothing is running in
 #             the pane, so a prior agent process has exited.
-#   unknown - anything else, INCLUDING a bare "node"/"python" interpreter
-#             name (pi's own launcher execs into a generic "node" process
-#             with no reliable way to attribute it back to pi from outside
-#             the pane - docs/tmux-backend.md "Known gaps"), or an unreadable
-#             pane. Callers must never treat unknown as a confirmed-dead
+#   unknown - anything else, INCLUDING a bare "node"/"python"/"bun" interpreter
+#             name (pi's launcher execs into a generic "node" process and
+#             omp's runs under "bun", with no reliable way to attribute either
+#             back from outside the pane - docs/tmux-backend.md "Known gaps"),
+#             or an unreadable pane. Callers must never treat unknown as a confirmed-dead
 #             signal (bin/fm-bootstrap.sh's secondmate-liveness sweep gates a
 #             respawn on `dead` only).
 fm_backend_tmux_agent_alive() {  # <target>
