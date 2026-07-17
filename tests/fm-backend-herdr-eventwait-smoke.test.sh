@@ -79,7 +79,7 @@ SOCK=$(fm_backend_herdr_socket_path "$SESSION")
 # report-agent is herdr's documented primitive for a non-built-in process to
 # report its own agent state (docs/herdr-backend.md); routed through the lab
 # helper's guarded `run` so it carries the trailing --session.
-fm_herdr_lab_cli "$SESSION" pane report-agent "$PANE_ID" --source fm-evwait-test --agent claude --state idle >/dev/null 2>&1 \
+fm_herdr_lab_cli "$SESSION" pane report-agent "$PANE_ID" --source fm-evwait-test --agent omp --state idle >/dev/null 2>&1 \
   || fail "could not register the pane's agent as idle"
 
 OUT="$SCRATCH/out"; RCF="$SCRATCH/rc"
@@ -91,7 +91,7 @@ WPID=$!
 sleep 0.5   # let it connect, subscribe, and reconcile the idle baseline
 
 START=$(python3 -c 'import time; print(time.time())')
-fm_herdr_lab_cli "$SESSION" pane report-agent "$PANE_ID" --source fm-evwait-test --agent claude --state blocked >/dev/null 2>&1 \
+fm_herdr_lab_cli "$SESSION" pane report-agent "$PANE_ID" --source fm-evwait-test --agent omp --state blocked >/dev/null 2>&1 \
   || fail "could not drive the pane's agent to blocked"
 wait "$WPID"
 END=$(python3 -c 'import time; print(time.time())')

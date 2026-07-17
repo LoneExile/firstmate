@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Opt-in interactive OMP (Oh My Pi) primary regression on a private tmux socket
-# and isolated homes. Mirrors tests/fm-pi-primary-live-e2e.test.sh.
+# and isolated homes.
 #
-# OMP has no PI_OFFLINE stub model, so this drives a REAL omp model session (same
-# cost profile as the pi live e2e) - hence it is opt-in behind FM_OMP_LIVE_E2E=1.
-# It launches omp with explicit `-e` extension paths (the documented trust-free
-# path), so it does not depend on an interactive project-trust prompt, and gates
-# readiness on the extension-loaded marker files rather than pane text.
+# OMP has no offline stub model, so this drives a REAL omp model session — hence
+# it is opt-in behind FM_OMP_LIVE_E2E=1. It launches omp with explicit `-e`
+# extension paths (the documented trust-free path), so it does not depend on an
+# interactive project-trust prompt, and gates readiness on the extension-loaded
+# marker files rather than pane text.
 set -u
 
 if [ "${FM_OMP_LIVE_E2E:-0}" != 1 ]; then

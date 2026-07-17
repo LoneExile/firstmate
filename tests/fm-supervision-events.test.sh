@@ -40,7 +40,7 @@ reset_state() {
 }
 
 mkrec() {  # <pane_id> <status>
-  fm_transition_record "$1" "wG" "" "$2" claude
+  fm_transition_record "$1" "wG" "" "$2" omp
 }
 
 # --- handle_push_transition: enqueue + wake for a non-paused blocked crew -----

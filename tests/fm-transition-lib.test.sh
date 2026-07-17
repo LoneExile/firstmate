@@ -12,12 +12,12 @@ set -u
 
 # --- record construction + accessors ----------------------------------------
 
-REC=$(fm_transition_record "wG:pQ" "wG" "" "blocked" "claude")
+REC=$(fm_transition_record "wG:pQ" "wG" "" "blocked" "omp")
 [ "$(fm_transition_pane_id "$REC")" = "wG:pQ" ] || fail "pane_id accessor wrong: $REC"
 [ "$(fm_transition_workspace_id "$REC")" = "wG" ] || fail "workspace_id accessor wrong: $REC"
 [ "$(fm_transition_from_status "$REC")" = "" ] || fail "from_status should be empty: $REC"
 [ "$(fm_transition_to_status "$REC")" = "blocked" ] || fail "to_status accessor wrong: $REC"
-[ "$(fm_transition_agent "$REC")" = "claude" ] || fail "agent accessor wrong: $REC"
+[ "$(fm_transition_agent "$REC")" = "omp" ] || fail "agent accessor wrong: $REC"
 pass "fm_transition_record builds a 5-field record and every accessor reads its field"
 
 # The record is exactly TAB-separated (five fields, four tabs).

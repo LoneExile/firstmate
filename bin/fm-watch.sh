@@ -110,16 +110,12 @@ CHECK_TIMEOUT=${FM_CHECK_TIMEOUT:-30}     # seconds allowed per *.check.sh
 SIGNAL_GRACE=${FM_SIGNAL_GRACE:-30}   # seconds to linger after a signal so trailing
                                       # signals (a status write, then the same turn's
                                       # turn-end hook) coalesce into one wake
-# Busy signatures per harness, OR-ed. Extend via env when new adapters are verified.
-# claude/codex: "esc to interrupt"; opencode: "esc interrupt"; pi: "Working...";
-# grok: "Ctrl+c:cancel" (the mid-turn cancel hint in grok's keybind bar, shown iff a
-# turn is running; absent when idle - verified grok 0.2.73, ASCII to avoid the
-# locale fragility of matching grok's braille spinner glyph directly).
-# omp (Oh My Pi, a Pi fork): shows a "Working..."/"Working…" loader and, being
-# claude-compatible (sets CLAUDECODE=1), may also render "esc to interrupt". Both
-# are covered below. Exact interactive footer is pending live verification; override
-# with FM_BUSY_REGEX (and FM_COMPOSER_IDLE_RE) once captured on a live omp pane.
-BUSY_REGEX=${FM_BUSY_REGEX:-'esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel'}
+# Busy signature for omp. omp (Oh My Pi) shows a "Working..."/"Working…" loader
+# and, being claude-compatible (sets CLAUDECODE=1), may also render "esc to
+# interrupt". Both are covered below. Exact interactive footer is pending live
+# verification; override with FM_BUSY_REGEX (and FM_COMPOSER_IDLE_RE) once
+# captured on a live omp pane.
+BUSY_REGEX=${FM_BUSY_REGEX:-'esc (to )?interrupt|Working(\.\.\.|…)'}
 # Always-on wake triage: most wakes during a long crew validation are benign (a
 # working: note or turn-end while a pipeline runs, a no-change heartbeat). Rather
 # than wake firstmate's LLM for each, this watcher classifies every wake in bash

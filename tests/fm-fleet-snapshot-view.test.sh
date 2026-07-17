@@ -34,7 +34,7 @@ case "${1:-}" in
       *pane_current_command*)
         case "$target" in
           *dead-secondmate*) printf 'zsh\n' ;;
-          *) printf 'codex\n' ;;
+          *) printf 'omp\n' ;;
         esac
         ;;
       *) printf '%%1\n' ;;
@@ -81,7 +81,7 @@ EOF
     "window=firstmate:fm-ship-task" \
     "worktree=$home/projects/alpha-worktree" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=ship" \
     "mode=ship" \
     "yolo=off" \
@@ -91,7 +91,7 @@ EOF
     "window=firstmate:fm-scout-task" \
     "worktree=$home/projects/scout-worktree" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=scout" \
     "mode=scout" \
     "yolo=off"
@@ -100,7 +100,7 @@ EOF
     "window=firstmate:fm-secondmate-task" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -111,7 +111,7 @@ EOF
     "window=workspace:surface" \
     "worktree=$home/projects/missing-cmux" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=ship" \
     "mode=ship"
 }
@@ -154,7 +154,7 @@ test_fixture_snapshot_json() {
   printf '%s' "$out" | jq -e '
     .tasks[] | select(.id == "secondmate-task")
     | .secondmate_projects == ["alpha","beta","gamma"]
-      and .endpoint.agent_alive == "alive"
+      and .endpoint.agent_alive == "unknown"
       and (.actions.watch | contains("do not routinely fm-peek"))
   ' >/dev/null || fail "secondmate return-channel guidance missing"
   printf '%s' "$out" | jq -e '
@@ -185,7 +185,7 @@ test_event_hints_follow_reconciled_current_state() {
     "window=firstmate:fm-active-decision" \
     "worktree=$home/projects/active-decision" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=ship" \
     "mode=ship"
   printf 'needs-decision: choose an API shape\n' > "$home/state/active-decision.status"
@@ -193,7 +193,7 @@ test_event_hints_follow_reconciled_current_state() {
     "window=firstmate:fm-active-blocked" \
     "worktree=$home/projects/active-blocked" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=ship" \
     "mode=ship"
   printf 'blocked: waiting on access\n' > "$home/state/active-blocked.status"
@@ -201,7 +201,7 @@ test_event_hints_follow_reconciled_current_state() {
     "window=firstmate:fm-stale-decision-ship-task" \
     "worktree=$home/projects/stale-decision" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=ship" \
     "mode=ship"
   printf 'needs-decision: already answered\n' > "$home/state/stale-decision.status"
@@ -209,7 +209,7 @@ test_event_hints_follow_reconciled_current_state() {
     "window=firstmate:fm-stale-blocked-ship-task" \
     "worktree=$home/projects/stale-blocked" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=ship" \
     "mode=ship"
   printf 'blocked: old failure\n' > "$home/state/stale-blocked.status"
@@ -278,7 +278,7 @@ EOF
     "window=firstmate:fm-bold-task" \
     "worktree=$projects/bold-worktree" \
     "project=alpha" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=scout" \
     "mode=scout"
   printf 'done: report ready\n' > "$home/state/bold-task.status"
@@ -385,7 +385,7 @@ test_view_renders_snapshot() {
     "view should render done backlog row"
   assert_contains "$view" "bin/fm-send.sh fm-secondmate-task" \
     "view should show secondmate send guidance"
-  assert_contains "$view" "| secondmate-task | working / status-log | secondmate | $home/secondmate-home | tmux | present / alive |" \
+  assert_contains "$view" "| secondmate-task | working / status-log | secondmate | $home/secondmate-home | tmux | present / unknown |" \
     "view should show secondmate endpoint agent liveness"
   assert_not_contains "$view" "fm-peek.sh fm-secondmate-task" \
     "view must not tell firstmate to routinely peek secondmates"
@@ -398,7 +398,7 @@ test_view_renders_dead_secondmate_agent_status() {
   fm_write_meta "$home/state/dead-secondmate.meta" \
     "window=firstmate:fm-dead-secondmate" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -425,7 +425,7 @@ test_open_decision_survives_later_unrelated_event() {
     "window=firstmate:fm-masked-decision" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -454,7 +454,7 @@ test_secondmate_open_decision_survives_live_endpoint() {
     "window=firstmate:fm-active-secondmate" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -464,7 +464,7 @@ test_secondmate_open_decision_survives_live_endpoint() {
   out=$(PATH="$fakebin:$PATH" FM_HOME="$home" "$SNAPSHOT" --json)
   printf '%s' "$out" | jq -e '
     .tasks[] | select(.id == "active-secondmate")
-    | .endpoint.agent_alive == "alive"
+    | .endpoint.agent_alive == "unknown"
       and .hints.pending_decision == true
       and (.hints.open_decisions | length) == 1
   ' >/dev/null || fail "a live secondmate endpoint must not clear an unrelated keyed decision: $out"
@@ -481,7 +481,7 @@ test_open_decision_transfers_to_captain_hold() {
     "window=firstmate:fm-transferred-decision" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -506,7 +506,7 @@ test_open_decision_clears_on_keyed_resolution() {
     "window=firstmate:fm-resolved-decision" \
     "worktree=$home/secondmate-home" \
     "project=$home/secondmate-home" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=secondmate" \
     "mode=secondmate" \
     "home=$home/secondmate-home" \
@@ -540,7 +540,7 @@ test_completed_scout_report_is_pointer_not_pending() {
     "window=firstmate:fm-lavish-103" \
     "worktree=$home/projects/scout-wt" \
     "project=firstmate" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=scout" \
     "mode=scout"
   # Stale needs-decision, then the scout finished (done). No keyed resolution.
@@ -571,7 +571,7 @@ test_parked_scout_decision_stays_pending() {
     "window=firstmate:fm-parked-scout" \
     "worktree=$home/projects/scout-wt2" \
     "project=firstmate" \
-    "harness=codex" \
+    "harness=omp" \
     "kind=scout" \
     "mode=scout"
   printf 'needs-decision [key=q1]: adopt approach A or B\n' > "$home/state/parked-scout.status"

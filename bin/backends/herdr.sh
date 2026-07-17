@@ -672,80 +672,71 @@ fm_backend_herdr_strip_ansi() {  # <text>
 # whichever match comes LAST (scanning forward), so a shape earlier in
 # scrollback/a popup can never outrank the real (bottom-anchored) composer:
 #
-#   bordered - a boxed composer (verified grok 0.2.82): the row's TRIMMED
-#              content both STARTS and ENDS with the same border glyph (│, ┃,
-#              or a plain ASCII |). The box's own top/bottom rows use rounded
-#              corners (╭─…─╮ / ╰─…─╯), which never match; popup item rows and
-#              horizontal separator rows carry no border glyph at all; the
-#              footer help line ("Enter:send │ … │ …") uses │ only as an
-#              INTERIOR separator and does not start with one, so it never
-#              matches either.
-#   bare     - an UNBORDERED composer (verified real claude 2.x and codex
-#              0.142.x, both under herdr 0.7.1, docs/herdr-backend.md
-#              "Incident (2026-07-07)"): the row's TRIMMED content starts with
-#              one of the verified agent-specific prompt glyphs but carries no
-#              closing border at all - claude's own live input row is a bare
-#              "❯ …" with no surrounding │, and codex's is a bare "› …". Both
-#              harnesses ALSO render bordered decorative boxes elsewhere (a
-#              startup welcome banner, an update-available notice) that
-#              satisfy the bordered shape above; requiring a match on EITHER
-#              shape and keeping the last (bottom-most) one is what keeps the
-#              live composer winning over a stale decorative box still sitting
-#              in the same capture window - a bordered box is only ever
-#              followed later on screen by the actual live composer, never the
-#              reverse, in every harness observed so far. The bare shape is
-#              deliberately narrower than the bordered content classifier so a
-#              no-agent shell fallback prompt (`>`, `$`, `%`, or `#`) falls
-#              through to `unknown` instead of being misread as delivered.
-#   separated - Pi's composer is one or more content rows between two solid
+#   bordered - a boxed composer: the row's TRIMMED content both STARTS and ENDS
+#              with the same border glyph (│, ┃, or a plain ASCII |). The box's
+#              own top/bottom rows use rounded corners (╭─…─╮ / ╰─…─╯), which
+#              never match; popup item rows and horizontal separator rows carry no
+#              border glyph at all; the footer help line ("Enter:send │ … │ …")
+#              uses │ only as an INTERIOR separator and does not start with one,
+#              so it never matches either.
+#   bare     - an UNBORDERED composer (docs/herdr-backend.md "Incident
+#              (2026-07-07)"): the row's TRIMMED content starts with a verified
+#              agent-specific prompt glyph but carries no closing border at all -
+#              omp's live input row is a bare "❯ …" with no surrounding │. omp
+#              also renders bordered decorative boxes elsewhere (a startup welcome
+#              banner, an update-available notice) that satisfy the bordered shape
+#              above; requiring a match on EITHER shape and keeping the last
+#              (bottom-most) one is what keeps the live composer winning over a
+#              stale decorative box still sitting in the same capture window - a
+#              bordered box is only ever followed later on screen by the actual
+#              live composer, never the reverse, in every harness observed so far.
+#              The bare shape is deliberately narrower than the bordered content
+#              classifier so a no-agent shell fallback prompt (`>`, `$`, `%`, or
+#              `#`) falls through to `unknown` instead of being misread as
+#              delivered.
+#   separated - omp's composer is one or more content rows between two solid
 #              horizontal `─` separator rows, with no prompt glyph or side
 #              borders. This shape is accepted ONLY when Herdr's native
-#              `agent get` identifies the target as Pi and reports it idle,
-#              done, or blocked. A missing/stale/non-Pi agent identity, a
-#              working Pi, an over-tall candidate, or an incomplete separator
+#              `agent get` identifies the target as omp and reports it idle,
+#              done, or blocked. A missing/stale/non-omp agent identity, a
+#              working omp, an over-tall candidate, or an incomplete separator
 #              pair remains unknown. This identity + structure conjunction is
-#              what makes a blank Pi row safe without weakening dead-shell or
+#              what makes a blank omp row safe without weakening dead-shell or
 #              ambiguous-pane refusal.
 #
 #   empty   - blank, a bare prompt glyph, known ghost/placeholder text
-#             ("Type a message...", verified grok 0.2.82's empty-composer
-#             placeholder), or only de-emphasised ANSI ghost/placeholder text
-#             recognized by the shared fm_composer_strip_ghost extractor
+#             ("Type a message..."), or only de-emphasised ANSI ghost/placeholder
+#             text recognized by the shared fm_composer_strip_ghost extractor
 #             (dim/faint or dark-TRUECOLOR foreground). Safe to treat as
 #             submitted.
 #   pending - real, unsubmitted text sits in the composer. This deliberately
 #             also covers a slash-command popup that just closed but only
 #             auto-completed or filled an argument-hint placeholder into the
-#             composer (e.g. "/compact" -> "/compact compaction
-#             instructions", verified live against real grok 0.2.82) - that
-#             first Enter is a SELECTION, not a submission.
+#             composer (e.g. "/compact" -> "/compact compaction instructions") -
+#             that first Enter is a SELECTION, not a submission.
 #   unknown - the pane could not be read, or no composer row (of either shape)
 #             was found in the captured window.
 #
 # Ghost/placeholder note: herdr's ANSI pane read preserves the harness's own
 # de-emphasis styling, and the classifier extracts real typed content with the
 # shared fm_composer_strip_ghost (bin/fm-composer-lib.sh), which drops dim/faint
-# runs (claude's rotating prompt suggestion, codex's idle suggestion after the
-# bare `›` prompt) AND dark/muted truecolor foreground runs (grok's placeholder),
-# while keeping non-de-emphasised real typed input. This is the same owner the
-# tmux adapter routes through, so the two backends cannot drift (task
-# afk-herdr-false-pending); it superseded a herdr-only faint byte-pattern check
-# that recognized only codex's bold-wrapped bare prompt and missed claude's own
-# dim ghost - the overnight away-mode injection wedge on the primary claude pane.
+# runs AND dark/muted truecolor foreground runs, while keeping non-de-emphasised
+# real typed input. This is the same owner the tmux adapter routes through, so
+# the two backends cannot drift (task afk-herdr-false-pending).
 FM_BACKEND_HERDR_COMPOSER_LINES=${FM_BACKEND_HERDR_COMPOSER_LINES:-20}
-# Known ghost/placeholder composer text. Extend this if another
-# herdr-verified harness needs its own idle placeholder recognized.
+# Known ghost/placeholder composer text. Extend via FM_BACKEND_HERDR_IDLE_RE
+# once a new idle placeholder is observed on a live omp pane.
 FM_BACKEND_HERDR_IDLE_RE=${FM_BACKEND_HERDR_IDLE_RE:-'^Type a message\.\.\.$'}
-# Known bare (unbordered) prompt glyphs a composer row may start with: ❯
-# (claude) and › (codex) only. Generic shell-style glyphs > $ % # are still
-# recognized after a bordered composer row has already been structurally found.
+# Known bare (unbordered) prompt glyph a composer row may start with: ❯ (omp).
+# Generic shell-style glyphs > $ % # are still recognized after a bordered
+# composer row has already been structurally found.
 FM_BACKEND_HERDR_BARE_PROMPT_RE=${FM_BACKEND_HERDR_BARE_PROMPT_RE:-'^[❯›]'}
-# Pi allows a multi-line composer between its horizontal separators. Bound the
+# omp allows a multi-line composer between its horizontal separators. Bound the
 # structural candidate so two unrelated transcript rules with an arbitrarily
 # large region between them can never be promoted into a composer.
-FM_BACKEND_HERDR_PI_COMPOSER_MAX_LINES=${FM_BACKEND_HERDR_PI_COMPOSER_MAX_LINES:-8}
+FM_BACKEND_HERDR_OMP_COMPOSER_MAX_LINES=${FM_BACKEND_HERDR_OMP_COMPOSER_MAX_LINES:-8}
 
-fm_backend_herdr_pi_separator_row() {  # <plain-row>
+fm_backend_herdr_omp_separator_row() {  # <plain-row>
   local row=$1
   row="${row#"${row%%[![:space:]]*}"}"
   row="${row%"${row##*[![:space:]]}"}"
@@ -754,36 +745,36 @@ fm_backend_herdr_pi_separator_row() {  # <plain-row>
 }
 
 # Locate the content and closing-row position of the bottom-most complete pair
-# of Pi separator rows. A separator closes the preceding candidate and
+# of omp separator rows. A separator closes the preceding candidate and
 # immediately opens the next, so an earlier transcript rule can never outrank
 # the live bottom composer pair. Globals let the caller compare this shape's
 # screen position with generic bordered/bare candidates without losing empty
 # composer content through command substitution.
-fm_backend_herdr_pi_composer_find() {  # <ansi-capture>
+fm_backend_herdr_omp_composer_find() {  # <ansi-capture>
   local cap=$1 line plain open=0 lines=0 candidate="" max row=0 open_row=0
-  max=$FM_BACKEND_HERDR_PI_COMPOSER_MAX_LINES
+  max=$FM_BACKEND_HERDR_OMP_COMPOSER_MAX_LINES
   case "$max" in ''|*[!0-9]*|0) max=8 ;; esac
-  FM_BACKEND_HERDR_PI_PAIR_FOUND=0
-  FM_BACKEND_HERDR_PI_PAIR_VALID=0
-  FM_BACKEND_HERDR_PI_PAIR_OPEN_LINE=0
-  FM_BACKEND_HERDR_PI_PAIR_LINE=0
-  FM_BACKEND_HERDR_PI_LAST_SEPARATOR_LINE=0
-  FM_BACKEND_HERDR_PI_CONTENT=""
+  FM_BACKEND_HERDR_OMP_PAIR_FOUND=0
+  FM_BACKEND_HERDR_OMP_PAIR_VALID=0
+  FM_BACKEND_HERDR_OMP_PAIR_OPEN_LINE=0
+  FM_BACKEND_HERDR_OMP_PAIR_LINE=0
+  FM_BACKEND_HERDR_OMP_LAST_SEPARATOR_LINE=0
+  FM_BACKEND_HERDR_OMP_CONTENT=""
   while IFS= read -r line; do
     row=$((row + 1))
     plain=$(fm_backend_herdr_strip_ansi "$line")
-    if fm_backend_herdr_pi_separator_row "$plain"; then
-      FM_BACKEND_HERDR_PI_LAST_SEPARATOR_LINE=$row
+    if fm_backend_herdr_omp_separator_row "$plain"; then
+      FM_BACKEND_HERDR_OMP_LAST_SEPARATOR_LINE=$row
       if [ "$open" -eq 1 ]; then
-        FM_BACKEND_HERDR_PI_PAIR_FOUND=1
-        FM_BACKEND_HERDR_PI_PAIR_OPEN_LINE=$open_row
-        FM_BACKEND_HERDR_PI_PAIR_LINE=$row
+        FM_BACKEND_HERDR_OMP_PAIR_FOUND=1
+        FM_BACKEND_HERDR_OMP_PAIR_OPEN_LINE=$open_row
+        FM_BACKEND_HERDR_OMP_PAIR_LINE=$row
         if [ "$lines" -le "$max" ]; then
-          FM_BACKEND_HERDR_PI_PAIR_VALID=1
-          FM_BACKEND_HERDR_PI_CONTENT=$candidate
+          FM_BACKEND_HERDR_OMP_PAIR_VALID=1
+          FM_BACKEND_HERDR_OMP_CONTENT=$candidate
         else
-          FM_BACKEND_HERDR_PI_PAIR_VALID=0
-          FM_BACKEND_HERDR_PI_CONTENT=""
+          FM_BACKEND_HERDR_OMP_PAIR_VALID=0
+          FM_BACKEND_HERDR_OMP_CONTENT=""
         fi
       fi
       open=1
@@ -841,49 +832,46 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
         ;;
     esac
   done < <(printf '%s\n' "$cap")
-  # Pi has no prompt glyph or side border. Compare its bottom-most complete
+  # omp has no prompt glyph or side border. Compare its bottom-most complete
   # separator pair with the last generic match so an earlier bordered transcript
-  # row can never suppress the live Pi composer. Identity is consulted only when
+  # row can never suppress the live omp composer. Identity is consulted only when
   # a lower separator pair could change the verdict.
-  fm_backend_herdr_pi_composer_find "$cap"
-  if [ "$FM_BACKEND_HERDR_PI_PAIR_FOUND" -eq 1 ] \
-     && [ "$FM_BACKEND_HERDR_PI_PAIR_LINE" -gt "$generic_line" ] \
-     && [ "$generic_line" -lt "$FM_BACKEND_HERDR_PI_PAIR_OPEN_LINE" ]; then
+  fm_backend_herdr_omp_composer_find "$cap"
+  if [ "$FM_BACKEND_HERDR_OMP_PAIR_FOUND" -eq 1 ] \
+     && [ "$FM_BACKEND_HERDR_OMP_PAIR_LINE" -gt "$generic_line" ] \
+     && [ "$generic_line" -lt "$FM_BACKEND_HERDR_OMP_PAIR_OPEN_LINE" ]; then
     identity=$(fm_backend_herdr_agent_identity_raw "$session" "$pane" 2>/dev/null || true)
     IFS=$'\t' read -r agent agent_status <<EOF
 $identity
 EOF
     case "$agent:$agent_status" in
-      pi:idle|pi:done|pi:blocked)
-        if [ "$FM_BACKEND_HERDR_PI_PAIR_VALID" -eq 1 ]; then
+      omp:idle|omp:done|omp:blocked)
+        if [ "$FM_BACKEND_HERDR_OMP_PAIR_VALID" -eq 1 ]; then
           shape=separated
-          raw_match=$FM_BACKEND_HERDR_PI_CONTENT
+          raw_match=$FM_BACKEND_HERDR_OMP_CONTENT
           found=1
         else
           found=0
         fi
         ;;
-      pi:*|:*)
-        # A working Pi or unreadable identity cannot authorize injection, and
+      omp:*|:*)
+        # A working omp or unreadable identity cannot authorize injection, and
         # the lower separator pair proves any generic row above is not current.
         found=0
         ;;
-      *) : ;; # A known non-Pi agent keeps its established generic verdict.
+      *) : ;; # A known non-omp agent keeps its established generic verdict.
     esac
-  elif [ "$FM_BACKEND_HERDR_PI_PAIR_FOUND" -eq 0 ] \
-       && [ "$FM_BACKEND_HERDR_PI_LAST_SEPARATOR_LINE" -gt "$generic_line" ]; then
+  elif [ "$FM_BACKEND_HERDR_OMP_PAIR_FOUND" -eq 0 ] \
+       && [ "$FM_BACKEND_HERDR_OMP_LAST_SEPARATOR_LINE" -gt "$generic_line" ]; then
     # A lower unmatched separator proves the generic row is stale, but does
-    # not provide the complete Pi composer structure required for injection.
+    # not provide the complete omp composer structure required for injection.
     found=0
   fi
   [ "$found" -eq 1 ] || { printf 'unknown'; return 0; }
   # Content: extract the real typed text from the raw row with the shared,
   # fleet-wide ghost stripper (bin/fm-composer-lib.sh), which drops dim/faint AND
-  # dark-truecolor ghost/placeholder runs. This replaces the former herdr-only
-  # faint byte-pattern check (which recognized only Codex's bold-wrapped bare
-  # prompt and missed claude's own dim prompt-suggestion ghost - the overnight
-  # afk-herdr-false-pending wedge) and, in a dark theme, drops the composer's own
-  # dark box border too, which is why the bordered flag was read from the plain
+  # dark-truecolor ghost/placeholder runs; in a dark theme, drops the composer's
+  # own dark box border too, which is why the bordered flag was read from the plain
   # shape above, not from this ghost-stripped content.
   stripped=$(printf '%s\n' "$raw_match" | fm_composer_strip_ghost)
   stripped="${stripped#"${stripped%%[![:space:]]*}"}"
@@ -896,7 +884,7 @@ EOF
     stripped="${stripped#"${stripped%%[![:space:]]*}"}"
     stripped="${stripped%"${stripped##*[![:space:]]}"}"
   elif [ "$shape" = separated ]; then
-    # The native Pi identity plus the complete separator pair is the genuine
+    # The native omp identity plus the complete separator pair is the genuine
     # composer container, equivalent to a bordered box for shared content
     # classification. ANSI stripping keeps real text and drops only styling.
     bordered=1
@@ -913,9 +901,8 @@ EOF
 # (Enter only, never retyped) until herdr's NATIVE agent-state (agent get)
 # confirms a real turn started. Verified hazard (herdr-verification-p2.md
 # "slash/$ autocomplete popup"): a `/`- or `$`-prefixed send opens a
-# completion popup within ~0.1s, exactly like tmux's claude/codex popups, so
-# the caller's <settle> before the first Enter matters here the same way it
-# does for tmux.
+# completion popup within ~0.1s, exactly like tmux popups, so the caller's
+# <settle> before the first Enter matters here the same way it does for tmux.
 #
 # Confirmation signal (rewritten for the 2026-07-07 incident below;
 # superseded a composer-content read that itself replaced a delta-based check
@@ -928,15 +915,14 @@ EOF
 #
 # Incident (2026-07-07, followed up on 2026-07-08): a redelivery loop in the
 # away-mode daemon. Root cause: composer-content submit confirmation was too
-# sensitive to harness rendering details. Real claude/codex use bare prompt
-# rows, and real codex adds dynamic idle suggestions after `›`; the later
-# ANSI-aware composer classifier now handles the pre-injection guard for that
-# Codex shape, but idle-baseline submit confirmation deliberately stays on
-# native agent-state so delivery does not depend on composer text. Composer
-# content is retained for other callers (the away-mode daemon's PRE-injection
-# empty-box guard, still dispatched via fm_backend_composer_state /
-# fm_backend_herdr_composer_state) and for submit attempts whose pre-Enter
-# agent-state baseline is not legibly idle.
+# sensitive to harness rendering details. omp uses bare prompt rows and may
+# add dynamic idle suggestions; the ANSI-aware composer classifier now handles
+# the pre-injection guard for that shape, but idle-baseline submit confirmation
+# deliberately stays on native agent-state so delivery does not depend on
+# composer text. Composer content is retained for other callers (the away-mode
+# daemon's PRE-injection empty-box guard, still dispatched via
+# fm_backend_composer_state / fm_backend_herdr_composer_state) and for submit
+# attempts whose pre-Enter agent-state baseline is not legibly idle.
 #
 # This also still correctly handles the earlier 2026-07-03 incident (a
 # slash-command popup selection/placeholder-fill on the FIRST Enter is not a
@@ -955,10 +941,10 @@ EOF
 #     loop gives up and sends a needless extra Enter.
 #   - Instant round-trip (a turn starts AND returns to idle between two
 #     polls): unavoidable in the absolute, but bounded by how tightly polls
-#     are packed into the budget; real claude/codex measured first-working
-#     at 90-490ms, comfortably inside a several-hundred-ms, multiply-sampled
-#     window, so this has not been observed in practice. On the (unobserved)
-#     residual chance it happens, the verdict is "pending" and the caller
+#     are packed into the budget; observed first-working at 90-490ms,
+#     comfortably inside a several-hundred-ms, multiply-sampled window, so
+#     this has not been observed in practice. On the (unobserved) residual
+#     chance it happens, the verdict is "pending" and the caller
 #     never retypes - only re-sends Enter, which lands on an already-empty
 #     composer and is a no-op, not a duplicate delivery of <text> (see
 #     fm-send.sh/fm-supervise-daemon.sh: retyping only happens if a caller
@@ -1061,11 +1047,10 @@ fm_backend_herdr_busy_state() {  # <target>
 #   busy    - a submit-active status was observed at least once. This is
 #             confirmation that a real turn started or reached a prompt -
 #             the submit landed - independent of
-#             whatever the composer's own text happens to show (docs/
 #             herdr-backend.md "Incident (2026-07-07)": composer content is
-#             what fooled the OLD confirmation on codex's dynamic idle-tip
-#             text). Returned the INSTANT it is seen, without waiting out the
-#             rest of the budget.
+#             what fooled the OLD confirmation - an idle-tip text in the
+#             composer was misread as real pending input). Returned the INSTANT
+#             it is seen, without waiting out the rest of the budget.
 #   idle    - the target was legibly read at least once and never reported
 #             "busy" across the whole window - a genuine "not (yet)
 #             submitted" signal, not a read failure. The caller retries
@@ -1081,9 +1066,9 @@ fm_backend_herdr_busy_state() {  # <target>
 # that lands partway through is not missed just because it had not landed by
 # the FIRST sample.
 # Empirical evidence (docs/herdr-backend.md "Native agent-state submit
-# confirmation"): real claude and codex observed first-working at 90-490ms
-# after Enter, so a several-hundred-ms budget sampled repeatedly reliably
-# catches it. The remaining, inherent gap - a turn so fast it starts AND
+# confirmation"): observed first-working at 90-490ms after Enter, so a
+# several-hundred-ms budget sampled repeatedly reliably catches it.
+# The remaining, inherent gap - a turn so fast it starts AND
 # returns to idle between two samples - is bounded by how tightly <polls> is
 # packed into <budget-seconds>; nothing observed in real testing has come
 # close to that, but it is a residual risk, not a mathematical impossibility

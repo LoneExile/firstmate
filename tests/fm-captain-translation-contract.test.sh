@@ -12,7 +12,6 @@ AFK="$ROOT/.agents/skills/afk/SKILL.md"
 DECISION="$ROOT/.agents/skills/decision-hold-lifecycle/SKILL.md"
 RECOVERY="$ROOT/.agents/skills/stuck-crewmate-recovery/SKILL.md"
 HARNESS="$ROOT/.agents/skills/harness-adapters/SKILL.md"
-CODEXAPP="$ROOT/.agents/skills/firstmate-codexapp/SKILL.md"
 FMX="$ROOT/.agents/skills/fmx-respond/SKILL.md"
 UPDATE="$ROOT/.agents/skills/updatefirstmate/SKILL.md"
 
@@ -109,14 +108,6 @@ test_outward_facing_skill_points_reference_section_9_owner() {
     "decision relay does not reference section 9"
   assert_grep "using \`AGENTS.md\` section 9; do not mention metadata, harness, window, or worktree" "$RECOVERY" \
     "stuck-worker failure does not reference section 9"
-  assert_grep "under \`AGENTS.md\` section 9 that the requested worker runtime is not verified yet" "$HARNESS" \
-    "runtime fallback does not reference section 9"
-  assert_grep "use firstmate's own verified runtime for current work" "$HARNESS" \
-    "runtime fallback does not require the current-work fallback"
-  assert_grep "Do not pause current work for that future-verification choice, and never launch an unverified adapter." "$HARNESS" \
-    "runtime fallback permits waiting on future verification or launching an unverified adapter"
-  assert_grep "translate status prefixes and return-channel evidence through \`AGENTS.md\` section 9" "$CODEXAPP" \
-    "Codex Desktop result reporting does not reference section 9"
   assert_grep "It supplements \`AGENTS.md\` section 9; apply both, and this public-channel rule wins wherever it is stricter." "$FMX" \
     "X reply safety does not state that it supplements section 9"
   assert_grep "under \`AGENTS.md\` section 9 without firstmate's internal vocabulary" "$UPDATE" \
@@ -127,7 +118,7 @@ test_outward_facing_skill_points_reference_section_9_owner() {
 test_section_9_owner_is_not_duplicated_into_skills() {
   local duplicate_count file
   duplicate_count=0
-  for file in "$BOOTSTRAP" "$AFK" "$DECISION" "$RECOVERY" "$HARNESS" "$CODEXAPP" "$UPDATE"; do
+  for file in "$BOOTSTRAP" "$AFK" "$DECISION" "$RECOVERY" "$HARNESS" "$UPDATE"; do
     if grep -Fq "When evidence uses an internal label, rewrite it before sending:" "$file"; then
       duplicate_count=$((duplicate_count + 1))
     fi

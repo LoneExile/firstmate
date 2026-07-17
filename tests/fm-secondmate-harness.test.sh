@@ -42,24 +42,23 @@ fm_git_identity fmtest fmtest@example.com
 TMP_ROOT=$(fm_test_tmproot fm-secondmate-harness)
 export FM_BACKEND=tmux
 
-# omp (Oh My Pi) exports OMPCODE=1 (and CLAUDECODE=1) into child shells, and
-# fm-harness.sh detect_own checks OMPCODE first. Drop it so an ambient omp
-# session can't override the CLAUDECODE=1 pins below (CI has no such marker).
-# Extends the ambient-marker isolation from #432.
-unset OMPCODE
+# Drop ambient harness markers: fm-harness.sh no longer checks env markers
+# (it always returns omp), but dropping them keeps the test surface clean and
+# prevents an interactive omp session from leaking OMPCODE into child shells.
+unset OMPCODE CLAUDECODE
 
 # ===========================================================================
-# A) fm-harness.sh secondmate resolution + fallback (deterministic detect_own)
+# A) fm-harness.sh always returns omp for own/crew/secondmate
 # ===========================================================================
-# detect_own is pinned to claude via CLAUDECODE=1 so the "fall through to own"
-# cases are reproducible. Each row sets crew-harness / secondmate-harness in a
-# fresh config dir (a literal '-' means leave the file absent) and asserts BOTH
-# the secondmate resolution AND that crew resolution is unchanged (backward-compat).
-#   <label>^<crew-harness>^<secondmate-harness>^<expect-secondmate>^<expect-crew>
+# The harness is constant; config/crew-harness and config/secondmate-harness are
+# vestigial for harness selection (they only parametrize model/effort tokens now).
+# Each row sets or omits those files and asserts that both secondmate and crew
+# still resolve to omp regardless.
+#   <label>^<crew-harness>^<secondmate-harness>
 test_harness_resolution() {
-  local label crew sm exp_sm exp_crew case_dir cfg got_sm got_crew n
+  local label crew sm case_dir cfg got_sm got_crew n
   n=0
-  while IFS='^' read -r label crew sm exp_sm exp_crew; do
+  while IFS='^' read -r label crew sm; do
     [ -n "$label" ] || continue
     n=$((n + 1))
     case_dir="$TMP_ROOT/harness-$n"
@@ -67,20 +66,20 @@ test_harness_resolution() {
     mkdir -p "$cfg"
     [ "$crew" = "-" ] || printf '%s\n' "$crew" > "$cfg/crew-harness"
     [ "$sm" = "-" ] || printf '%s\n' "$sm" > "$cfg/secondmate-harness"
-    got_sm=$(CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
-    got_crew=$(CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" crew)
-    [ "$got_sm" = "$exp_sm" ] || fail "$label: secondmate resolved '$got_sm', expected '$exp_sm'"
-    [ "$got_crew" = "$exp_crew" ] || fail "$label: crew resolved '$got_crew', expected '$exp_crew'"
+    got_sm=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
+    got_crew=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" crew)
+    [ "$got_sm" = omp ] || fail "$label: secondmate resolved '$got_sm', expected omp"
+    [ "$got_crew" = omp ] || fail "$label: crew resolved '$got_crew', expected omp"
   done <<'ROWS'
-both absent -> own (backward-compat)^-^-^claude^claude
-crew set, secondmate absent -> crew (backward-compat)^codex^-^codex^codex
-crew set, secondmate set -> secondmate wins, crew untouched^codex^grok^grok^codex
-crew absent, secondmate set -> secondmate value, crew own^-^grok^grok^claude
-secondmate=default defers to crew^codex^default^codex^codex
-crew=default resolves to own, secondmate follows^default^-^claude^claude
-secondmate=default with crew absent -> own^-^default^claude^claude
+both config files absent -> omp^-^-
+crew set, secondmate absent -> omp^codex^-
+crew set, secondmate set -> still omp^codex^grok
+crew absent, secondmate set -> omp^-^grok
+secondmate=default -> omp^codex^default
+crew=default -> omp^default^-
+secondmate=default with crew absent -> omp^-^default
 ROWS
-  pass "A1 fm-harness.sh secondmate resolves the fallback chain; crew mode unchanged"
+  pass "A1 fm-harness.sh always returns omp for secondmate and crew regardless of config files"
 }
 
 # ===========================================================================
@@ -102,20 +101,20 @@ test_secondmate_model_effort_tokens() {
     cfg="$case_dir/config"
     mkdir -p "$cfg"
     [ "$line" = ABSENT ] || printf '%b\n' "$line" > "$cfg/secondmate-harness"
-    got_h=$(CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
-    got_m=$(CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-model)
-    got_e=$(CLAUDECODE=1 FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-effort)
+    got_h=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate)
+    got_m=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-model)
+    got_e=$(FM_CONFIG_OVERRIDE="$cfg" "$ROOT/bin/fm-harness.sh" secondmate-effort)
     [ "$got_h" = "$exp_harness" ] || fail "$label: harness resolved '$got_h', expected '$exp_harness'"
     [ "$got_m" = "$exp_model" ] || fail "$label: model resolved '$got_m', expected '$exp_model'"
     [ "$got_e" = "$exp_effort" ] || fail "$label: effort resolved '$got_e', expected '$exp_effort'"
   done <<'ROWS'
-absent file -> own harness, empty model/effort^ABSENT^claude^^
-bare harness only -> empty model/effort (backward-compat)^claude^claude^^
-harness + model -> model only^claude opus^claude^opus^
-harness + model + effort -> both^claude opus high^claude^opus^high
-default harness token -> falls back to crew, empty model/effort^default^claude^^
-extra whitespace between tokens is tolerated^grok   grok-4    xhigh^grok^grok-4^xhigh
-leading/trailing blank lines and a comment are skipped^# a comment\n\nclaude opus low\n^claude^opus^low
+absent file -> omp, empty model/effort^ABSENT^omp^^
+bare harness only -> empty model/effort (backward-compat)^claude^omp^^
+harness + model -> model only^claude opus^omp^opus^
+harness + model + effort -> both^claude opus high^omp^opus^high
+default harness token -> falls back to own, empty model/effort^default^omp^^
+extra whitespace between tokens is tolerated^grok   grok-4    xhigh^omp^grok-4^xhigh
+leading/trailing blank lines and a comment are skipped^# a comment\n\nclaude opus low\n^omp^opus^low
 ROWS
   pass "C1 fm-harness.sh secondmate-model/secondmate-effort resolve the optional tokens; bare harness stays empty (backward-compat)"
 }
@@ -131,81 +130,67 @@ test_propagate_lib() {
   mkdir -p "$src" "$dest"
 
   # 1. present source is copied
-  printf '{"default":{"harness":"codex"}}\n' > "$src/crew-dispatch.json"
-  printf 'codex\n' > "$src/crew-harness"
   printf 'manual\n' > "$src/backlog-backend"
   stdout="$d/clean-copy.out"
   stderr="$d/clean-copy.err"
   propagate_inheritable_config "$src" "$dest" >"$stdout" 2>"$stderr" || fail "propagate returned non-zero"
   [ ! -s "$stdout" ] || fail "clean copy wrote to stdout"
   [ ! -s "$stderr" ] || fail "clean copy wrote to stderr"
-  [ "$(cat "$dest/crew-dispatch.json")" = '{"default":{"harness":"codex"}}' ] || fail "crew-dispatch.json not propagated"
-  [ "$(cat "$dest/crew-harness")" = codex ] || fail "crew-harness not propagated"
   [ "$(cat "$dest/backlog-backend")" = manual ] || fail "backlog-backend not propagated"
 
   # 2. idempotent: an unchanged re-run does not churn the mtime
-  m1=$(date -r "$dest/crew-harness" +%s 2>/dev/null || stat -c %Y "$dest/crew-harness")
+  m1=$(date -r "$dest/backlog-backend" +%s 2>/dev/null || stat -c %Y "$dest/backlog-backend")
   sleep 1
   stdout="$d/unchanged.out"
   stderr="$d/unchanged.err"
   propagate_inheritable_config "$src" "$dest" >"$stdout" 2>"$stderr"
   [ ! -s "$stdout" ] || fail "unchanged propagation wrote to stdout"
   [ ! -s "$stderr" ] || fail "unchanged propagation wrote to stderr"
-  m2=$(date -r "$dest/crew-harness" +%s 2>/dev/null || stat -c %Y "$dest/crew-harness")
+  m2=$(date -r "$dest/backlog-backend" +%s 2>/dev/null || stat -c %Y "$dest/backlog-backend")
   [ "$m1" = "$m2" ] || fail "idempotent re-run churned mtime ($m1 -> $m2)"
 
   # 3. a changed source value converges downstream
-  printf '{"default":{"harness":"claude"}}\n' > "$src/crew-dispatch.json"
-  printf 'claude\n' > "$src/crew-harness"
   printf 'tasks-axi\n' > "$src/backlog-backend"
   propagate_inheritable_config "$src" "$dest"
-  [ "$(cat "$dest/crew-dispatch.json")" = '{"default":{"harness":"claude"}}' ] || fail "changed dispatch profile did not converge"
-  [ "$(cat "$dest/crew-harness")" = claude ] || fail "changed value did not converge"
   [ "$(cat "$dest/backlog-backend")" = tasks-axi ] || fail "changed backlog backend did not converge"
 
   outside="$d/outside-target"
-  rm -f "$dest/crew-harness" "$outside"
+  rm -f "$dest/backlog-backend" "$outside"
   printf 'outside\n' > "$outside"
-  ln -s "$outside" "$dest/crew-harness"
-  printf 'pi\n' > "$src/crew-harness"
+  ln -s "$outside" "$dest/backlog-backend"
+  printf 'manual\n' > "$src/backlog-backend"
   propagate_inheritable_config "$src" "$dest"
-  [ ! -L "$dest/crew-harness" ] || fail "destination symlink was not replaced"
-  [ "$(cat "$dest/crew-harness")" = pi ] || fail "destination symlink replacement has wrong content"
+  [ ! -L "$dest/backlog-backend" ] || fail "destination symlink was not replaced"
+  [ "$(cat "$dest/backlog-backend")" = manual ] || fail "destination symlink replacement has wrong content"
   [ "$(cat "$outside")" = outside ] || fail "destination symlink target was overwritten"
 
   # 4. removing the source mirrors absence downstream (primary-authoritative)
-  rm -f "$src/crew-dispatch.json" "$src/crew-harness" "$src/backlog-backend"
+  rm -f "$src/backlog-backend"
   propagate_inheritable_config "$src" "$dest"
-  [ -e "$dest/crew-dispatch.json" ] && fail "dispatch profile absence not mirrored downstream"
-  [ -e "$dest/crew-harness" ] && fail "absence not mirrored downstream"
   [ -e "$dest/backlog-backend" ] && fail "backlog-backend absence not mirrored downstream"
 
-  rm -f "$dest/crew-harness"
-  ln -s "$d/missing-target" "$dest/crew-harness"
+  rm -f "$dest/backlog-backend"
+  ln -s "$d/missing-target" "$dest/backlog-backend"
   propagate_inheritable_config "$src" "$dest"
-  [ -L "$dest/crew-harness" ] && fail "broken destination symlink not removed on absence mirror"
+  [ -L "$dest/backlog-backend" ] && fail "broken destination symlink not removed on absence mirror"
 
-  mkdir -p "$dest/crew-harness"
+  mkdir -p "$dest/backlog-backend"
   stderr="$d/remove-error.err"
   if propagate_inheritable_config "$src" "$dest" 2>"$stderr"; then
     fail "failed absence mirror returned success"
   fi
-  assert_contains "$(cat "$stderr")" "fm-config-inherit: error: failed to remove crew-harness" \
+  assert_contains "$(cat "$stderr")" "fm-config-inherit: error: failed to remove backlog-backend" \
     "remove error did not emit a stderr diagnostic"
-  [ -d "$dest/crew-harness" ] || fail "failed absence mirror removed the wrong path"
-  rm -rf "$dest/crew-harness"
+  [ -d "$dest/backlog-backend" ] || fail "failed absence mirror removed the wrong path"
+  rm -rf "$dest/backlog-backend"
 
-  # 5. secondmate-harness is never inherited
-  printf 'grok\n' > "$src/secondmate-harness"
-  printf '{"default":{"harness":"codex"}}\n' > "$src/crew-dispatch.json"
-  printf 'codex\n' > "$src/crew-harness"
+  # 5. secondmate-harness is never inherited (not in the inheritable set)
+  printf 'omp opus\n' > "$src/secondmate-harness"
   printf 'manual\n' > "$src/backlog-backend"
   rm -rf "$d/dest2"
   mkdir -p "$d/dest2"
   propagate_inheritable_config "$src" "$d/dest2"
   [ -e "$d/dest2/secondmate-harness" ] && fail "secondmate-harness was inherited (must not be)"
-  [ "$(cat "$d/dest2/crew-dispatch.json")" = '{"default":{"harness":"codex"}}' ] || fail "crew-dispatch.json not propagated alongside"
-  [ "$(cat "$d/dest2/crew-harness")" = codex ] || fail "crew-harness not propagated alongside"
   [ "$(cat "$d/dest2/backlog-backend")" = manual ] || fail "backlog-backend not propagated alongside"
 
   # 6. nothing to propagate -> destination dir is never created (a true no-op)
@@ -218,20 +203,20 @@ test_propagate_lib() {
   # stderr warning and a skip, not a silent miss.
   guard_repo="$d/guard-repo"
   git init -q -b main "$guard_repo"
-  printf 'config/crew-harness\nconfig/backlog-backend\n' > "$guard_repo/.gitignore"
+  printf 'config/crew-harness\n' > "$guard_repo/.gitignore"
   printf 'guard\n' > "$guard_repo/README.md"
   git -C "$guard_repo" add -A
   git -C "$guard_repo" commit -qm guard
-  printf '{"default":{"harness":"grok"}}\n' > "$src/crew-dispatch.json"
+  printf 'tasks-axi\n' > "$src/backlog-backend"
   stdout="$d/guard-skip.out"
   stderr="$d/guard-skip.err"
-  FM_INHERITABLE_CONFIG=crew-dispatch.json propagate_inheritable_config "$src" "$guard_repo/config" >"$stdout" 2>"$stderr" \
+  FM_INHERITABLE_CONFIG=backlog-backend propagate_inheritable_config "$src" "$guard_repo/config" >"$stdout" 2>"$stderr" \
     || fail "guard skip should not make propagation fail"
   [ ! -s "$stdout" ] || fail "guard skip wrote to stdout"
   err_text=$(cat "$stderr")
-  assert_contains "$err_text" "fm-config-inherit: warning: skipped crew-dispatch.json" \
+  assert_contains "$err_text" "fm-config-inherit: warning: skipped backlog-backend" \
     "guard skip did not emit a stderr warning"
-  [ ! -e "$guard_repo/config/crew-dispatch.json" ] || fail "guard skip still copied the unignored item"
+  [ ! -e "$guard_repo/config/backlog-backend" ] || fail "guard skip still copied the unignored item"
 
   pass "B1 propagate_inheritable_config: copy, idempotence, convergence, absence-mirror, exclusion, no-op, skip diagnostics"
 }
@@ -265,10 +250,9 @@ make_seeded_home() {
   printf 'charter\n' > "$home/data/charter.md"
 }
 
-# spawn_secondmate <world> <id> <home> [explicit-harness]
+# spawn_secondmate <world> <id> <home> [explicit-omp-arg]
 # Runs fm-spawn.sh in secondmate mode. FM_ROOT is the real repo (so fm-harness.sh
-# resolves), the primary config dir is <world>/home/config, and CLAUDECODE pins
-# detect_own. stderr is discarded (the local-HEAD ff sync harmlessly skips a
+# resolves). stderr is discarded (the local-HEAD ff sync harmlessly skips a
 # non-worktree home). Inspect <world>/home/state/<id>.meta and <home>/config after.
 spawn_secondmate() {
   local world=$1 id=$2 home=$3 harness=${4:-} fakebin
@@ -279,7 +263,7 @@ spawn_secondmate() {
   local spawn_args=("$id" "$home")
   [ -n "$harness" ] && spawn_args+=("$harness")
   spawn_args+=(--secondmate)
-  PATH="$fakebin:$BASE_PATH" TMUX='' CLAUDECODE=1 \
+  PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$world/home" \
     FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
     FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
@@ -289,61 +273,46 @@ spawn_secondmate() {
 
 meta_harness() { grep '^harness=' "$1" 2>/dev/null | tail -1 | cut -d= -f2-; }
 
-# Split active: crew-harness=claude + secondmate-harness=codex. The secondmate
-# AGENT launches on codex; its own crewmates inherit claude; secondmate-harness
-# does not flow into the home.
+# Only backlog-backend is inherited now (crew-dispatch.json and crew-harness
+# are no longer in FM_INHERITABLE_CONFIG). secondmate-harness still never propagates.
 test_spawn_split_and_inherit() {
   local w sm meta
   w="$TMP_ROOT/spawn-split"
   sm="$w/sm"
   mkdir -p "$w/home/config"
-  printf '{"default":{"harness":"claude","model":"haiku","effort":"low"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'claude\n' > "$w/home/config/crew-harness"
-  printf 'codex\n' > "$w/home/config/secondmate-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
+  printf 'omp opus\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate "$w" sm "$sm"
 
   meta="$w/home/state/sm.meta"
   [ -f "$meta" ] || fail "split: no meta written"
-  [ "$(meta_harness "$meta")" = codex ] \
-    || fail "split: secondmate launched on '$(meta_harness "$meta")', expected codex"
-  [ "$(cat "$sm/config/crew-harness" 2>/dev/null)" = claude ] \
-    || fail "split: home crew-harness not inherited as claude (got '$(cat "$sm/config/crew-harness" 2>/dev/null)')"
-  [ "$(cat "$sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"claude","model":"haiku","effort":"low"}}' ] \
-    || fail "split: home crew-dispatch.json not inherited"
+  [ "$(meta_harness "$meta")" = omp ] \
+    || fail "split: secondmate launched on '$(meta_harness "$meta")', expected omp"
   [ "$(cat "$sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "split: home backlog-backend not inherited as manual"
   [ -e "$sm/config/secondmate-harness" ] \
     && fail "split: secondmate-harness leaked into the secondmate home"
-  pass "B2 spawn: secondmate runs the secondmate harness; its home inherits declared config"
+  pass "B2 spawn: secondmate launches on omp; backlog-backend inherits; secondmate-harness does not"
 }
 
-# Backward-compat: secondmate-harness absent -> the secondmate launches on the
-# crew harness, exactly as before this knob existed, and that crew value is the
-# one inherited.
+# Backward-compat: no secondmate-harness, no config at all → omp, no propagation side effects.
 test_spawn_backward_compat_crew_fallback() {
   local w sm meta
   w="$TMP_ROOT/spawn-compat"
   sm="$w/sm"
-  mkdir -p "$w/home/config"
-  printf 'codex\n' > "$w/home/config/crew-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate "$w" sm "$sm"
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_harness "$meta")" = codex ] \
-    || fail "compat: secondmate launched on '$(meta_harness "$meta")', expected the crew harness codex"
-  [ "$(cat "$sm/config/crew-harness" 2>/dev/null)" = codex ] \
-    || fail "compat: home crew-harness not inherited as codex"
-  pass "B3 spawn: an absent secondmate-harness falls back to the crew harness (backward-compat)"
+  [ "$(meta_harness "$meta")" = omp ] \
+    || fail "compat: secondmate launched on '$(meta_harness "$meta")', expected omp"
+  pass "B3 spawn: an absent secondmate-harness spawns on omp"
 }
 
-# Bare backward-compat: no config at all. The secondmate falls through to its own
-# harness (claude here), and with no inheritable file the home is left untouched -
-# no config/ side effects.
+# Bare: no config at all. Spawns on omp; no propagation side effects.
 test_spawn_bare_backward_compat() {
   local w sm meta
   w="$TMP_ROOT/spawn-bare"
@@ -353,56 +322,49 @@ test_spawn_bare_backward_compat() {
   spawn_secondmate "$w" sm "$sm"
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_harness "$meta")" = claude ] \
-    || fail "bare: secondmate launched on '$(meta_harness "$meta")', expected own harness claude"
-  [ -e "$sm/config/crew-dispatch.json" ] && fail "bare: an unset primary still created a home crew-dispatch.json"
-  [ -e "$sm/config/crew-harness" ] && fail "bare: an unset primary still created a home crew-harness"
-  pass "B4 spawn: no config at all -> own harness and no propagation side effects"
+  [ "$(meta_harness "$meta")" = omp ] \
+    || fail "bare: secondmate launched on '$(meta_harness "$meta")', expected omp"
+  [ -e "$sm/config/backlog-backend" ] && fail "bare: an unset primary still created a home backlog-backend"
+  pass "B4 spawn: no config at all -> omp harness and no propagation side effects"
 }
 
-# An explicit per-spawn harness arg wins over config/secondmate-harness.
+# An explicit per-spawn "omp" arg still works (uses the omp launch template).
 test_spawn_explicit_harness_wins() {
   local w sm meta
   w="$TMP_ROOT/spawn-explicit"
   sm="$w/sm"
-  mkdir -p "$w/home/config"
-  printf 'codex\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
-  spawn_secondmate "$w" sm "$sm" claude
+  spawn_secondmate "$w" sm "$sm" omp
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_harness "$meta")" = claude ] \
-    || fail "explicit: launched on '$(meta_harness "$meta")', expected explicit claude over config codex"
-  pass "B5 spawn: an explicit per-spawn harness arg overrides config/secondmate-harness"
+  [ "$(meta_harness "$meta")" = omp ] \
+    || fail "explicit: launched on '$(meta_harness "$meta")', expected omp"
+  pass "B5 spawn: an explicit 'omp' harness arg still resolves and launches"
 }
 
-# The unverified-adapter guard holds on the resolved secondmate path: an unknown
-# config/secondmate-harness aborts the spawn (no meta written) and names the source.
-test_spawn_unverified_secondmate_harness_refused() {
+# The unverified-adapter guard still rejects an explicit unknown harness arg.
+test_spawn_explicit_unknown_harness_refused() {
   local w sm fakebin err rc
-  w="$TMP_ROOT/spawn-unverified"
+  w="$TMP_ROOT/spawn-unknown"
   sm="$w/sm"
   mkdir -p "$w/home/config" "$w/home/state"
-  printf 'bogus\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
   fakebin=$(make_noop_tmux "$w/tmux")
   err="$w/spawn.err"
   rc=0
-  PATH="$fakebin:$BASE_PATH" TMUX='' CLAUDECODE=1 \
+  PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$w/home" \
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$sm" --secondmate >/dev/null 2>"$err" || rc=$?
+    "$ROOT/bin/fm-spawn.sh" sm "$sm" bogus --secondmate >/dev/null 2>"$err" || rc=$?
 
-  [ "$rc" -ne 0 ] || fail "unverified: spawn should have failed"
-  assert_contains "$(cat "$err")" "no launch template for harness 'bogus'" \
-    "unverified: error names the rejected harness"
-  assert_contains "$(cat "$err")" "config/secondmate-harness" \
-    "unverified: error names the secondmate-harness source"
-  [ -e "$w/home/state/sm.meta" ] && fail "unverified: a meta was written despite the abort"
-  pass "B6 spawn: an unverified resolved secondmate harness is refused (guard intact)"
+  [ "$rc" -ne 0 ] || fail "unknown-harness: spawn should have failed"
+  assert_contains "$(cat "$err")" "unknown harness 'bogus'" \
+    "unknown-harness: error names the rejected harness"
+  [ -e "$w/home/state/sm.meta" ] && fail "unknown-harness: a meta was written despite the abort"
+  pass "B6 spawn: an explicit unknown harness arg is refused (omp is the only adapter)"
 }
 
 # ===========================================================================
@@ -459,7 +421,7 @@ spawn_secondmate_capture() {
   mkdir -p "$world/home/state" "$world/home/data"
   fakebin=$(make_launch_capturing_tmux "$world/tmux-$id")
   : > "$launchlog"
-  PATH="$fakebin:$BASE_PATH" TMUX='' CLAUDECODE=1 \
+  PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$world/home" \
     FM_STATE_OVERRIDE="$world/home/state" FM_DATA_OVERRIDE="$world/home/data" \
     FM_PROJECTS_OVERRIDE="$world/home/projects" FM_CONFIG_OVERRIDE="$world/home/config" \
@@ -467,73 +429,76 @@ spawn_secondmate_capture() {
     "$ROOT/bin/fm-spawn.sh" "$id" "$home" "$@" --secondmate
 }
 
-# A bare "<harness>" secondmate-harness file (today's format) must launch with
-# NO --model/--effort flag at all, and meta must keep recording model=default,
-# effort=default - the core backward-compat requirement of the new format.
+# A bare "<harness>" secondmate-harness file must launch with NO --model/--thinking
+# flag at all, and meta records model=default, effort=default.
 test_spawn_bare_harness_no_model_effort_flag() {
   local w sm meta launchlog launch out status
   w="$TMP_ROOT/spawn-bare-tokens"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'claude\n' > "$w/home/config/secondmate-harness"
+  printf 'omp\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   out=$(spawn_secondmate_capture "$w" sm "$sm" "$launchlog" 2>&1); status=$?
   expect_code 0 "$status" "bare-harness secondmate spawn should succeed"
 
   meta="$w/home/state/sm.meta"
+  [ "$(meta_field "$meta" harness)" = omp ] || fail "bare-tokens: meta harness not omp"
   [ "$(meta_field "$meta" model)" = default ] || fail "bare-tokens: meta model not default (got '$(meta_field "$meta" model)')"
   [ "$(meta_field "$meta" effort)" = default ] || fail "bare-tokens: meta effort not default (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
+  assert_contains "$launch" "omp --auto-approve" "bare-tokens: launch must use omp"
   assert_not_contains "$launch" "--model" "bare-tokens: launch must not carry a --model flag"
-  assert_not_contains "$launch" "--effort" "bare-tokens: launch must not carry an --effort flag"
-  pass "C2 spawn: a bare harness-only secondmate-harness file launches with no model/effort flag (backward-compat)"
+  assert_not_contains "$launch" "--thinking" "bare-tokens: launch must not carry a --thinking flag"
+  pass "C2 spawn: a bare omp secondmate-harness launches with no model/thinking flag (backward-compat)"
 }
 
-# "<harness> <model>" durably threads --model into the secondmate launch and
-# records it in meta, with no --effort flag (no effort token supplied).
+# "<harness> <model>" threads --model into the secondmate launch and records it
+# in meta, with no --thinking flag.
 test_spawn_secondmate_harness_model_token() {
   local w sm meta launchlog launch
   w="$TMP_ROOT/spawn-model-token"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'claude opus\n' > "$w/home/config/secondmate-harness"
+  printf 'omp opus\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" harness)" = claude ] || fail "model-token: meta harness not claude"
+  [ "$(meta_field "$meta" harness)" = omp ] || fail "model-token: meta harness not omp"
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-token: meta model not opus (got '$(meta_field "$meta" model)')"
   [ "$(meta_field "$meta" effort)" = default ] || fail "model-token: meta effort not default (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --model 'opus'" \
-    "model-token: launch did not carry --model opus"
-  assert_not_contains "$launch" "--effort" "model-token: launch must not carry an --effort flag"
-  pass "C3 spawn: config/secondmate-harness's model token threads --model into the launch and meta"
+  assert_contains "$launch" "omp --auto-approve --model 'opus'" \
+    "model-token: launch did not carry omp + --model opus"
+  assert_not_contains "$launch" "--thinking" "model-token: launch must not carry a --thinking flag"
+  pass "C3 spawn: config/secondmate-harness's model token threads --model into the omp launch and meta"
 }
 
 # "<harness> <model> <effort>" threads both flags into the launch and meta.
+# omp uses --thinking for effort (not --effort).
 test_spawn_secondmate_harness_model_and_effort_tokens() {
   local w sm meta launchlog launch
   w="$TMP_ROOT/spawn-model-effort-tokens"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'claude opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'omp opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
 
   meta="$w/home/state/sm.meta"
+  [ "$(meta_field "$meta" harness)" = omp ] || fail "model-effort-tokens: meta harness not omp"
   [ "$(meta_field "$meta" model)" = opus ] || fail "model-effort-tokens: meta model not opus"
   [ "$(meta_field "$meta" effort)" = high ] || fail "model-effort-tokens: meta effort not high (got '$(meta_field "$meta" effort)')"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "claude --dangerously-skip-permissions --model 'opus' --effort 'high'" \
-    "model-effort-tokens: launch did not carry both --model opus and --effort high"
-  pass "C4 spawn: config/secondmate-harness's model+effort tokens thread into the launch and meta"
+  assert_contains "$launch" "omp --auto-approve --model 'opus' --thinking 'high'" \
+    "model-effort-tokens: launch did not carry omp + --model opus + --thinking high"
+  pass "C4 spawn: config/secondmate-harness's model+effort tokens thread into the omp launch and meta"
 }
 
 # Precedence: an explicit per-spawn --model overrides the file's model token.
@@ -543,7 +508,7 @@ test_spawn_explicit_model_overrides_secondmate_harness_token() {
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'claude opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'omp opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --model sonnet >/dev/null 2>&1
@@ -559,13 +524,14 @@ test_spawn_explicit_model_overrides_secondmate_harness_token() {
 }
 
 # Precedence: an explicit per-spawn --effort overrides the file's effort token.
+# omp uses --thinking for effort.
 test_spawn_explicit_effort_overrides_secondmate_harness_token() {
   local w sm meta launchlog launch
   w="$TMP_ROOT/spawn-explicit-effort"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'claude opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'omp opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --effort low >/dev/null 2>&1
@@ -575,96 +541,91 @@ test_spawn_explicit_effort_overrides_secondmate_harness_token() {
   [ "$(meta_field "$meta" effort)" = low ] \
     || fail "explicit-effort: meta effort not low (got '$(meta_field "$meta" effort)'), explicit flag did not win over file token"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "--effort 'low'" "explicit-effort: launch did not use the explicit --effort"
-  assert_not_contains "$launch" "--effort 'high'" "explicit-effort: launch leaked the file's effort token"
+  assert_contains "$launch" "--thinking 'low'" "explicit-effort: launch did not use the explicit --thinking low"
+  assert_not_contains "$launch" "--thinking 'high'" "explicit-effort: launch leaked the file's effort token"
   pass "C6 spawn: an explicit --effort overrides config/secondmate-harness's effort token; the file's model token still applies"
 }
 
+# An explicit --harness omp (the only adapter) starts with clean model/effort
+# defaults: it does NOT inherit model/effort from config/secondmate-harness even
+# when that file has tokens (explicit harness arg bypasses the file's token read).
 test_spawn_explicit_harness_does_not_inherit_secondmate_harness_tokens() {
   local w sm meta launchlog launch
   w="$TMP_ROOT/spawn-explicit-harness-no-tokens"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'claude opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'omp opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
-  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --harness codex >/dev/null 2>&1
+  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --harness omp >/dev/null 2>&1
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" harness)" = codex ] || fail "explicit-harness-no-tokens: meta harness not codex"
+  [ "$(meta_field "$meta" harness)" = omp ] || fail "explicit-harness-no-tokens: meta harness not omp"
   [ "$(meta_field "$meta" model)" = default ] || fail "explicit-harness-no-tokens: meta model should stay default"
   [ "$(meta_field "$meta" effort)" = default ] || fail "explicit-harness-no-tokens: meta effort should stay default"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "codex --dangerously-bypass-approvals-and-sandbox" \
-    "explicit-harness-no-tokens: launch did not use codex"
+  assert_contains "$launch" "omp --auto-approve" "explicit-harness-no-tokens: launch did not use omp"
   assert_not_contains "$launch" "--model" "explicit-harness-no-tokens: launch must not carry a --model flag"
-  assert_not_contains "$launch" "model_reasoning_effort" \
-    "explicit-harness-no-tokens: launch must not carry a codex effort flag"
-  pass "C7 spawn: an explicit --harness starts with clean model/effort defaults"
+  assert_not_contains "$launch" "--thinking" "explicit-harness-no-tokens: launch must not carry a --thinking flag"
+  pass "C7 spawn: an explicit --harness omp starts with clean model/effort defaults (file tokens not read)"
 }
 
+# An explicit --harness omp with explicit --model and --effort flags threads them
+# into the launch and meta, still ignoring the file's tokens.
 test_spawn_explicit_harness_uses_explicit_profile_axes() {
   local w sm meta launchlog launch
   w="$TMP_ROOT/spawn-explicit-harness-explicit-axes"
   sm="$w/sm"
   launchlog="$w/launch.log"
   mkdir -p "$w/home/config"
-  printf 'claude opus high\n' > "$w/home/config/secondmate-harness"
+  printf 'omp opus high\n' > "$w/home/config/secondmate-harness"
   make_seeded_home "$sm" sm
 
-  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --harness codex --model gpt-5.5 --effort xhigh >/dev/null 2>&1
+  spawn_secondmate_capture "$w" sm "$sm" "$launchlog" --harness omp --model sonnet --effort medium >/dev/null 2>&1
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" harness)" = codex ] || fail "explicit-harness-explicit-axes: meta harness not codex"
-  [ "$(meta_field "$meta" model)" = gpt-5.5 ] || fail "explicit-harness-explicit-axes: meta model did not use explicit value"
-  [ "$(meta_field "$meta" effort)" = xhigh ] || fail "explicit-harness-explicit-axes: meta effort did not use explicit value"
+  [ "$(meta_field "$meta" harness)" = omp ] || fail "explicit-harness-explicit-axes: meta harness not omp"
+  [ "$(meta_field "$meta" model)" = sonnet ] || fail "explicit-harness-explicit-axes: meta model did not use explicit value"
+  [ "$(meta_field "$meta" effort)" = medium ] || fail "explicit-harness-explicit-axes: meta effort did not use explicit value"
   launch=$(cat "$launchlog")
-  assert_contains "$launch" "--model 'gpt-5.5'" \
-    "explicit-harness-explicit-axes: launch did not use the explicit --model"
-  assert_contains "$launch" "-c 'model_reasoning_effort=\"xhigh\"'" \
-    "explicit-harness-explicit-axes: launch did not use the explicit --effort"
-  assert_not_contains "$launch" "--model 'opus'" \
-    "explicit-harness-explicit-axes: launch leaked the file's model token"
-  assert_not_contains "$launch" "model_reasoning_effort=\"high\"" \
-    "explicit-harness-explicit-axes: launch leaked the file's effort token"
-  pass "C8 spawn: an explicit --harness still honors explicit model/effort flags"
+  assert_contains "$launch" "--model 'sonnet'" "explicit-harness-explicit-axes: launch did not use the explicit --model"
+  assert_contains "$launch" "--thinking 'medium'" "explicit-harness-explicit-axes: launch did not use the explicit --thinking"
+  assert_not_contains "$launch" "--model 'opus'" "explicit-harness-explicit-axes: launch leaked the file's model token"
+  assert_not_contains "$launch" "--thinking 'high'" "explicit-harness-explicit-axes: launch leaked the file's effort token"
+  pass "C8 spawn: explicit --harness omp still honors explicit model/effort flags"
 }
 
-# The harness fallback chain (secondmate-harness -> crew-harness -> own) still
-# resolves correctly with no model/effort tokens anywhere in the chain, and a
-# crew/scout (non-secondmate) launch is entirely unaffected by this feature: no
-# model/effort is invented for it even though its own project has no profile set.
+# Crew/scout (non-secondmate) launch is entirely unaffected by the model/effort token
+# feature: no model/effort is invented even when secondmate-harness has tokens.
 test_spawn_fallback_chain_and_crew_scout_unaffected() {
   local w sm meta home proj wt fakebin launchlog id launch
   w="$TMP_ROOT/spawn-fallback-and-crew"
   sm="$w/sm"
   launchlog="$w/launch.log"
-  mkdir -p "$w/home/config"
-  printf 'codex\n' > "$w/home/config/crew-harness"
   make_seeded_home "$sm" sm
 
+  # secondmate: no tokens, harness=omp, model/effort stay default
   spawn_secondmate_capture "$w" sm "$sm" "$launchlog" >/dev/null 2>&1
 
   meta="$w/home/state/sm.meta"
-  [ "$(meta_field "$meta" harness)" = codex ] \
-    || fail "fallback: secondmate harness did not fall back to crew-harness codex"
-  [ "$(meta_field "$meta" model)" = default ] || fail "fallback: meta model should stay default with no tokens anywhere"
-  [ "$(meta_field "$meta" effort)" = default ] || fail "fallback: meta effort should stay default with no tokens anywhere"
+  [ "$(meta_field "$meta" harness)" = omp ] \
+    || fail "fallback: secondmate harness not omp"
+  [ "$(meta_field "$meta" model)" = default ] || fail "fallback: meta model should stay default with no tokens"
+  [ "$(meta_field "$meta" effort)" = default ] || fail "fallback: meta effort should stay default with no tokens"
 
-  # Crew/scout launch: same crew-harness config, no --secondmate. Must resolve
-  # the crew harness and record no model/effort - this codepath must never read
-  # config/secondmate-harness's tokens at all.
+  # Crew/scout launch: must NOT read config/secondmate-harness tokens.
   id="crew-unaffected-z1"
   home="$w/home"
   proj="$w/crew-project"
   wt="$w/crew-wt"
   fakebin=$(make_launch_capturing_tmux "$w/tmux-crew")
   fm_git_worktree "$proj" "$wt" "wt-crew"
-  mkdir -p "$home/data/$id" "$home/projects" "$home/state"
+  mkdir -p "$home/data/$id" "$home/projects" "$home/state" "$home/config"
   printf 'brief\n' > "$home/data/$id/brief.md"
+  printf 'omp sonnet medium\n' > "$home/config/secondmate-harness"
   : > "$launchlog"
-  PATH="$fakebin:$BASE_PATH" TMUX="fake,1,0" CLAUDECODE=1 \
+  PATH="$fakebin:$BASE_PATH" TMUX="fake,1,0" \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
@@ -672,13 +633,13 @@ test_spawn_fallback_chain_and_crew_scout_unaffected() {
     "$ROOT/bin/fm-spawn.sh" "$id" "$proj" >/dev/null 2>&1
   meta="$home/state/$id.meta"
   [ "$(meta_field "$meta" kind)" = ship ] || fail "crew-unaffected: expected an ordinary ship task"
-  [ "$(meta_field "$meta" harness)" = codex ] || fail "crew-unaffected: crew harness resolution changed"
+  [ "$(meta_field "$meta" harness)" = omp ] || fail "crew-unaffected: crew harness not omp"
   [ "$(meta_field "$meta" model)" = default ] || fail "crew-unaffected: crew task must not invent a model"
   [ "$(meta_field "$meta" effort)" = default ] || fail "crew-unaffected: crew task must not invent an effort"
   launch=$(cat "$launchlog")
   assert_not_contains "$launch" "--model" "crew-unaffected: crew launch must not carry a --model flag"
-  assert_not_contains "$launch" "--effort" "crew-unaffected: crew launch must not carry an --effort flag"
-  pass "C9 spawn: the harness fallback chain still resolves with no tokens; crew/scout launches are unaffected by this feature"
+  assert_not_contains "$launch" "--thinking" "crew-unaffected: crew launch must not carry a --thinking flag"
+  pass "C9 spawn: no tokens in secondmate-harness → defaults; crew/scout launches are unaffected by model/effort tokens"
 }
 
 # ===========================================================================
@@ -766,49 +727,33 @@ run_config_push() {
     "$ROOT/bin/fm-config-push.sh"
 }
 
-# The sweep pushes the primary's declared inherited config into a live home,
-# re-converges it when the primary changes it, and mirrors absence when the
-# primary clears it - all while never inheriting secondmate-harness.
+# The sweep pushes the primary's declared inherited config (backlog-backend) into
+# a live home, re-converges it when the primary changes it, and mirrors absence
+# when the primary clears it - all while never inheriting secondmate-harness.
 test_bootstrap_sweep_propagates_and_reconverges() {
   local w c1
   w=$(new_world boot-prop)
   c1=$(git -C "$w/main" rev-parse HEAD)
   add_sm_worktree "$w" sm "$c1"
 
-  # Initial push: primary crew-harness=codex, secondmate-harness=grok (must NOT flow).
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
+  # Initial push: primary backlog-backend=manual; secondmate-harness must NOT flow.
   printf 'manual\n' > "$w/home/config/backlog-backend"
-  printf 'grok\n' > "$w/home/config/secondmate-harness"
+  printf 'omp opus\n' > "$w/home/config/secondmate-harness"
   run_bootstrap "$w" >/dev/null
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = codex ] \
-    || fail "sweep: crew-harness not pushed into the live home"
-  [ "$(cat "$w/sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"codex"}}' ] \
-    || fail "sweep: crew-dispatch.json not pushed into the live home"
   [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "sweep: backlog-backend not pushed into the live home"
   [ -e "$w/sm/config/secondmate-harness" ] \
     && fail "sweep: secondmate-harness was inherited (must not be)"
 
-  # Re-converge: primary changes inherited config values; the home follows on the next sweep.
-  printf '{"default":{"harness":"claude"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'claude\n' > "$w/home/config/crew-harness"
+  # Re-converge: primary changes backlog-backend; the home follows on the next sweep.
   printf 'tasks-axi\n' > "$w/home/config/backlog-backend"
   run_bootstrap "$w" >/dev/null
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = claude ] \
-    || fail "sweep: home did not re-converge to the primary's new crew-harness"
-  [ "$(cat "$w/sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"claude"}}' ] \
-    || fail "sweep: home did not re-converge to the primary's new crew-dispatch.json"
   [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = tasks-axi ] \
     || fail "sweep: home did not re-converge to the primary's new backlog-backend"
 
-  # Mirror absence: primary clears inherited config; the home's copies are removed.
-  rm -f "$w/home/config/crew-dispatch.json" "$w/home/config/crew-harness" "$w/home/config/backlog-backend"
+  # Mirror absence: primary clears inherited config; the home's copy is removed.
+  rm -f "$w/home/config/backlog-backend"
   run_bootstrap "$w" >/dev/null
-  [ -e "$w/sm/config/crew-dispatch.json" ] \
-    && fail "sweep: home crew-dispatch.json not removed after the primary cleared it"
-  [ -e "$w/sm/config/crew-harness" ] \
-    && fail "sweep: home crew-harness not removed after the primary cleared it"
   [ -e "$w/sm/config/backlog-backend" ] \
     && fail "sweep: home backlog-backend not removed after the primary cleared it"
   pass "B7 bootstrap sweep pushes, re-converges, and mirrors absence; never inherits secondmate-harness"
@@ -822,53 +767,18 @@ test_bootstrap_sweep_propagates_when_tracked_current() {
   head=$(git -C "$w/main" rev-parse HEAD)
   add_sm_worktree "$w" sm "$head"   # already on the primary's HEAD (ff is a no-op)
 
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
   run_bootstrap "$w" >/dev/null
-  [ "$(cat "$w/sm/config/crew-dispatch.json" 2>/dev/null)" = '{"default":{"harness":"codex"}}' ] \
-    || fail "crew-dispatch.json did not propagate to a tracked-current home"
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = codex ] \
-    || fail "config did not propagate to a tracked-current home"
   [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
     || fail "backlog-backend did not propagate to a tracked-current home"
   pass "B8 bootstrap sweep propagates config even when the home's tracked files are already current"
-}
-
-test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home() {
-  local w out status
-  w=$(new_world boot-stale-dispatch no)
-  add_sm_worktree "$w" sm "$(git -C "$w/main" rev-parse HEAD)"
-  printf 'local divergence\n' >> "$w/sm/README.md"
-  git -C "$w/sm" add README.md
-  git -C "$w/sm" commit -qm local
-  printf 'config/crew-dispatch.json\n' >> "$w/main/.gitignore"
-  git -C "$w/main" add .gitignore
-  git -C "$w/main" commit -qm c2
-
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
-  printf 'manual\n' > "$w/home/config/backlog-backend"
-  out=$(run_bootstrap "$w")
-
-  assert_contains "$out" "SECONDMATE_SYNC: secondmate sm: skipped: diverged from" \
-    "stale dispatch: expected fast-forward skip"
-  [ ! -e "$w/sm/config/crew-dispatch.json" ] \
-    || fail "stale dispatch: crew-dispatch.json was copied before the home ignored it"
-  [ "$(cat "$w/sm/config/crew-harness" 2>/dev/null)" = codex ] \
-    || fail "stale dispatch: existing ignored config stopped propagating"
-  [ "$(cat "$w/sm/config/backlog-backend" 2>/dev/null)" = manual ] \
-    || fail "stale dispatch: backlog backend stopped propagating"
-  status=$(git -C "$w/sm" status --porcelain -- config/crew-dispatch.json)
-  [ -z "$status" ] || fail "stale dispatch: crew-dispatch.json dirtied the home: $status"
-  pass "B9 bootstrap sweep defers new inherited config until the home ignores it"
 }
 
 # Backward-compat: with no inherited config set, the sweep is a no-op for the
 # home's config/ - exactly as before this feature - and ordinary sweep behavior
 # (fast-forward) is unaffected.
 test_bootstrap_sweep_no_inheritance_is_noop() {
-  local w c1
+  local w c1 head
   w=$(new_world boot-noop)
   c1=$(git -C "$w/main" rev-parse HEAD)
   add_sm_worktree "$w" sm "$c1"
@@ -876,13 +786,10 @@ test_bootstrap_sweep_no_inheritance_is_noop() {
   printf 'v2\n' > "$w/main/AGENTS.md"
   git -C "$w/main" add -A
   git -C "$w/main" commit -qm c2
-  local head
   head=$(git -C "$w/main" rev-parse HEAD)
 
   run_bootstrap "$w" >/dev/null
 
-  [ -e "$w/sm/config/crew-dispatch.json" ] && fail "no-inheritance sweep created a home crew-dispatch.json"
-  [ -e "$w/sm/config/crew-harness" ] && fail "no-inheritance sweep created a home crew-harness"
   [ -e "$w/sm/config" ] && fail "no-inheritance sweep created a home config/ dir"
   [ "$(git -C "$w/sm" rev-parse HEAD)" = "$head" ] \
     || fail "no-inheritance sweep did not still fast-forward the tracked files"
@@ -894,13 +801,15 @@ test_bootstrap_sweep_surfaces_config_propagation_failure() {
   w=$(new_world boot-prop-fail)
   c1=$(git -C "$w/main" rev-parse HEAD)
   add_sm_worktree "$w" sm "$c1"
-  mkdir -p "$w/sm/config/crew-harness"
+  # Poison backlog-backend as a directory so the copy fails.
+  printf 'manual\n' > "$w/home/config/backlog-backend"
+  mkdir -p "$w/sm/config/backlog-backend"
 
   out=$(run_bootstrap "$w")
 
   fail_line=$(printf '%s\n' "$out" | grep '^SECONDMATE_SYNC: secondmate sm: skipped: inheritance failed' || true)
   [ -n "$fail_line" ] || fail "bootstrap did not surface inheritance propagation failure (got: $out)"
-  [ -d "$w/sm/config/crew-harness" ] || fail "failed propagation removed the wrong path"
+  [ -d "$w/sm/config/backlog-backend" ] || fail "failed propagation removed the wrong path"
   pass "B11 bootstrap sweep surfaces config propagation failures"
 }
 
@@ -920,8 +829,6 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
   git -C "$w/main" commit -qm c2
   old_head=$(git -C "$w/sm" rev-parse HEAD)
 
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
   err="$w/config-push-basic.err"
   out=$(run_config_push "$w" 2>"$err"); status=$?
@@ -931,10 +838,6 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
     "config push lacked the header"
   assert_contains "$out" "secondmate sm ($sm_real):" \
     "config push did not discover the live secondmate through registry fallback"
-  assert_contains "$out" "crew-dispatch.json: pushed" \
-    "config push did not report crew-dispatch as pushed"
-  assert_contains "$out" "crew-harness: pushed" \
-    "config push did not report crew-harness as pushed"
   assert_contains "$out" "backlog-backend: pushed" \
     "config push did not report backlog-backend as pushed"
   assert_not_contains "$out" "NUDGE_SECONDMATES" \
@@ -945,28 +848,19 @@ test_config_push_propagates_reports_without_ff_or_nudge() {
 
   out2=$(run_config_push "$w" 2>"$err"); status=$?
   expect_code 0 "$status" "idempotent config push should succeed"
-  assert_contains "$out2" "crew-dispatch.json: unchanged" \
-    "idempotent config push did not report crew-dispatch as unchanged"
-  assert_contains "$out2" "crew-harness: unchanged" \
-    "idempotent config push did not report crew-harness as unchanged"
   assert_contains "$out2" "backlog-backend: unchanged" \
     "idempotent config push did not report backlog-backend as unchanged"
   pass "B12 config-push propagates via shared live discovery, reports items, and does not fast-forward or nudge"
 }
 
 test_config_push_reports_skips_dirty_and_invalid_home() {
-  local w head out err status stale_real dirty_real bad_home err_text tmp
+  local w head out err status dirty_real bad_home err_text tmp
   w=$(new_world config-push-warnings)
   head=$(git -C "$w/main" rev-parse HEAD)
   add_sm_worktree "$w" dirty "$head"
-  add_sm_worktree "$w" stale "$head"
   dirty_real=$(cd "$w/dirty" && pwd -P)
-  stale_real=$(cd "$w/stale" && pwd -P)
 
   printf 'local edit\n' >> "$w/dirty/README.md"
-  tmp="$w/stale/.gitignore.tmp"
-  grep -v '^config/crew-dispatch.json$' "$w/stale/.gitignore" > "$tmp"
-  mv "$tmp" "$w/stale/.gitignore"
 
   bad_home="$w/not-secondmate"
   mkdir -p "$bad_home"
@@ -976,8 +870,6 @@ test_config_push_reports_skips_dirty_and_invalid_home() {
     printf 'home=%s\n' "$bad_home"
   } > "$w/home/state/bad.meta"
 
-  printf '{"default":{"harness":"codex"}}\n' > "$w/home/config/crew-dispatch.json"
-  printf 'codex\n' > "$w/home/config/crew-harness"
   printf 'manual\n' > "$w/home/config/backlog-backend"
   err="$w/config-push-warnings.err"
   out=$(run_config_push "$w" 2>"$err"); status=$?
@@ -987,16 +879,9 @@ test_config_push_reports_skips_dirty_and_invalid_home() {
     "config push did not report dirty home"
   assert_contains "$out" "home: dirty working tree - local-material push continuing" \
     "config push did not surface dirty state"
-  assert_contains "$out" "secondmate stale ($stale_real):" \
-    "config push did not report stale home"
-  assert_contains "$out" "crew-dispatch.json: skipped - destination does not allow inherited item" \
-    "config push did not report non-allowing item skip"
   assert_contains "$out" "secondmate bad ($bad_home): skipped - unsafe home: not a seeded secondmate home" \
     "config push did not report invalid secondmate home"
-  err_text=$(cat "$err")
-  assert_contains "$err_text" "fm-config-inherit: warning: skipped crew-dispatch.json" \
-    "config push did not inherit the lib's skip stderr warning"
-  pass "B13 config-push reports dirty, non-allowing, and invalid homes without failing warnings-only runs"
+  pass "B13 config-push reports dirty and invalid homes without failing warnings-only runs"
 }
 
 test_config_push_exits_nonzero_on_copy_error() {
@@ -1005,8 +890,8 @@ test_config_push_exits_nonzero_on_copy_error() {
   head=$(git -C "$w/main" rev-parse HEAD)
   add_sm_worktree "$w" sm "$head"
   sm_real=$(cd "$w/sm" && pwd -P)
-  printf 'codex\n' > "$w/home/config/crew-harness"
-  mkdir -p "$w/sm/config/crew-harness"
+  printf 'manual\n' > "$w/home/config/backlog-backend"
+  mkdir -p "$w/sm/config/backlog-backend"
 
   err="$w/config-push-error.err"
   out=$(run_config_push "$w" 2>"$err"); status=$?
@@ -1014,10 +899,10 @@ test_config_push_exits_nonzero_on_copy_error() {
   expect_code 1 "$status" "copy-error config push should exit non-zero"
   assert_contains "$out" "secondmate sm ($sm_real):" \
     "config push error output missed the home"
-  assert_contains "$out" "crew-harness: error - failed to copy" \
+  assert_contains "$out" "backlog-backend: error - failed to copy" \
     "config push did not report the per-item copy error"
   err_text=$(cat "$err")
-  assert_contains "$err_text" "fm-config-inherit: error: failed to copy crew-harness" \
+  assert_contains "$err_text" "fm-config-inherit: error: failed to copy backlog-backend" \
     "copy error did not emit a stderr diagnostic"
   pass "B14 config-push exits nonzero on real propagation errors"
 }
@@ -1029,7 +914,7 @@ test_spawn_split_and_inherit
 test_spawn_backward_compat_crew_fallback
 test_spawn_bare_backward_compat
 test_spawn_explicit_harness_wins
-test_spawn_unverified_secondmate_harness_refused
+test_spawn_explicit_unknown_harness_refused
 test_spawn_bare_harness_no_model_effort_flag
 test_spawn_secondmate_harness_model_token
 test_spawn_secondmate_harness_model_and_effort_tokens
@@ -1040,7 +925,6 @@ test_spawn_explicit_harness_uses_explicit_profile_axes
 test_spawn_fallback_chain_and_crew_scout_unaffected
 test_bootstrap_sweep_propagates_and_reconverges
 test_bootstrap_sweep_propagates_when_tracked_current
-test_bootstrap_sweep_defers_dispatch_on_stale_unignored_home
 test_bootstrap_sweep_no_inheritance_is_noop
 test_bootstrap_sweep_surfaces_config_propagation_failure
 test_config_push_propagates_reports_without_ff_or_nudge

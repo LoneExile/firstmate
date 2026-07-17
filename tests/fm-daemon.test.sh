@@ -828,7 +828,7 @@ test_tmux_composer_state_bare_shell_is_unknown() {
 }
 
 # The other side of the fix: a bordered composer box (the harness draws its own
-# prompt glyph inside it) and a bare AGENT prompt glyph (claude ❯, codex ›) are
+# prompt glyph inside it) and a bare AGENT prompt glyph (omp ❯) are
 # genuine empty agent composers and must still read `empty`.
 test_tmux_composer_state_bordered_and_agent_rows_are_empty() {
   local dir fakebin capture out
@@ -841,11 +841,11 @@ test_tmux_composer_state_bordered_and_agent_rows_are_empty() {
   printf '%s\n' "❯ " > "$capture"
   out=$(PATH="$fakebin:$PATH" FM_FAKE_TMUX_CAPTURE="$capture" FM_FAKE_TMUX_CURSOR_Y=0 \
     fm_tmux_composer_state "fakepane")
-  [ "$out" = empty ] || fail "a bare claude '❯' composer should read empty, got '$out'"
+  [ "$out" = empty ] || fail "a bare omp '❯' composer should read empty, got '$out'"
   printf '%s\n' "› " > "$capture"
   out=$(PATH="$fakebin:$PATH" FM_FAKE_TMUX_CAPTURE="$capture" FM_FAKE_TMUX_CURSOR_Y=0 \
     fm_tmux_composer_state "fakepane")
-  [ "$out" = empty ] || fail "a bare codex '›' composer should read empty, got '$out'"
+  [ "$out" = empty ] || fail "a bare '›' glyph composer should read empty, got '$out'"
   pass "fm_tmux_composer_state: a bordered composer box and bare agent glyphs (❯/›) still read empty"
 }
 
@@ -914,8 +914,8 @@ test_classify_stale_dedup_against_signal() {
 }
 
 test_pane_input_pending_bordered_idle_not_pending() {
-  # THE regression: an idle claude composer is a bordered box ("│ > … │"). The
-  # old idle regex only matched a BARE prompt, so every idle claude pane read as
+  # THE regression: an idle omp composer is a bordered box ("│ > … │"). The
+  # old idle regex only matched a BARE prompt, so every idle omp pane read as
   # pending and the away-mode daemon deferred 100% of escalations for 9.5h.
   local dir state fakebin capture line
   dir=$(make_supercase pending-bordered-idle)
@@ -950,7 +950,7 @@ test_pane_input_pending_bordered_with_text_is_pending() {
 
 test_submit_ack_confirms_on_bordered_empty_composer() {
   # RC2: the submit acknowledgement must recognize a bordered-EMPTY composer as
-  # "submitted." The old ACK reused the broken check, so on claude it could never
+  # "submitted." The old ACK reused the broken check, so historically could never
   # confirm and always reported a false "Enter swallowed."
   local dir fakebin sent verdict
   dir=$(make_bordered_case ack-bordered)
@@ -1090,7 +1090,7 @@ test_max_defer_afk_inactive_does_not_flush_or_alarm() {
 # --- backend-independent active wedge alert ---------------------------------
 # These cover the 2026-07-10 overnight-incident fix: the max-defer wedge alarm's
 # ACTIVE alert channel must reach the captain even when the wedged pane and its
-# backend status-line are unreadable (a claude-on-herdr primary that night).
+# backend status-line are unreadable (an omp-on-herdr primary that night).
 #
 # NO test here EVER posts a real notification. Every notifier routes through
 # the FM_WEDGE_ALARM_EXEC seam, which tests/wake-helpers.sh forces to a recorder

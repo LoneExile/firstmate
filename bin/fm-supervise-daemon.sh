@@ -533,7 +533,7 @@ mark_escalated_seen() {  # <kind> <arg> <state>
 # unsubmitted text - a human's half-typed line (the return race) or a previous
 # injection whose Enter was swallowed. The detector drops dim/faint ghost text and
 # strips the harness's composer box borders, so a ghost-only or idle bordered
-# claude composer ("│ > … │") is correctly read as empty, not pending (incidents
+# omp composer ("│ > … │") is correctly read as empty, not pending (incidents
 # afk-invx-i5 and composer-robust).
 # pane_is_busy / pane_input_pending: BACKEND-AWARE now (previously tmux-only
 # direct calls). <backend> defaults to tmux when omitted, so every existing
@@ -619,7 +619,7 @@ escalate_flush() {  # <state>
 # --- backend-independent active wedge alert ---------------------------------
 # The tmux status-line flash in inject_wedge_alarm below is a cosmetic,
 # client-side OSD with no cross-backend equivalent, so a wedged non-tmux primary
-# (the 2026-07-10 overnight incident: a claude-on-herdr primary) got NO active
+# (the 2026-07-10 overnight incident on a non-tmux primary) got NO active
 # signal - only the passive state/.subsuper-inject-wedged marker, which nothing
 # surfaces until the next fleet action (that night, 20 escalations sat buffered
 # for 8.5h). These helpers add a configurable active alert that does not depend

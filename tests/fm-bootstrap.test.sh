@@ -110,15 +110,6 @@ SH
   chmod +x "$fakebin/tasks-axi"
 }
 
-add_real_jq() {
-  local fakebin=$1 real_jq
-  real_jq=$(command -v jq 2>/dev/null) || fail "jq is required for dispatch profile validation tests"
-  cat > "$fakebin/jq" <<SH
-#!/usr/bin/env bash
-exec '$real_jq' "\$@"
-SH
-  chmod +x "$fakebin/jq"
-}
 
 make_fake_fleet_sync_root() {
   local dir=$1 fake_root
@@ -284,11 +275,10 @@ missing tasks-axi is required by default^1^-^1^-^exact^MISSING: tasks-axi (insta
 incompatible tasks-axi is required by default^1^0.1.0^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without archive-body is required by default^1^0.1.2:noarchive^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 tasks-axi without multi-id mv is required by default^1^0.2.2:nomulti^1^-^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
-missing quota-axi is required by default^1^0.1.1^0^manual^exact^MISSING: quota-axi (install: npm install -g quota-axi)^
 manual backlog backend still requires missing tasks-axi^1^-^1^manual^exact^MISSING: tasks-axi (install: npm install -g tasks-axi)^
 manual backlog backend suppresses tasks-axi availability^1^0.1.1^1^manual^empty^^
 ROWS
-  pass "bootstrap reports treehouse lease + tasks-axi/quota-axi bootstrap contracts"
+  pass "bootstrap reports treehouse lease + tasks-axi bootstrap contracts"
 }
 
 test_no_mistakes_min_version() {
@@ -641,47 +631,20 @@ test_fleet_sync_timeout_is_computed_before_launch() {
 }
 
 make_routine_bootstrap_fixture() {
-  local case_dir=$1 fakebin root home sm c1
+  local case_dir=$1 fakebin root home
   root="$case_dir/root"
   home="$case_dir/home"
-  sm="$case_dir/sm"
   fm_git_identity
   mkdir -p "$home/config" "$home/state"
-  printf '%s\n' codex > "$home/config/crew-harness"
-  printf '%s\n' '{"rules":[{"when":"normal work","use":{"harness":"codex"}}],"default":{"harness":"claude","effort":"low"}}' \
-    > "$home/config/crew-dispatch.json"
   git init -q -b main "$root"
-  {
-    printf '%s\n' '.fm-secondmate-home'
-    printf '%s\n' 'config/crew-harness'
-    printf '%s\n' 'config/crew-dispatch.json'
-  } > "$root/.gitignore"
+  printf '%s\n' '.fm-secondmate-home' > "$root/.gitignore"
   printf '%s\n' 'instructions' > "$root/AGENTS.md"
   mkdir -p "$root/bin" "$root/.agents/skills"
   printf '%s\n' 'echo ok' > "$root/bin/fm-spawn.sh"
   printf '%s\n' 'skill' > "$root/.agents/skills/example.md"
   git -C "$root" add -A
   git -C "$root" commit -qm initial
-  c1=$(git -C "$root" rev-parse HEAD)
-  git -C "$root" worktree add -q --detach "$sm" "$c1"
-  printf '%s\n' sm > "$sm/.fm-secondmate-home"
-  {
-    printf 'window=firstmate:fm-sm\n'
-    printf 'kind=secondmate\n'
-    printf 'harness=codex\n'
-    printf 'home=%s\n' "$sm"
-  } > "$home/state/sm.meta"
   fakebin=$(make_fake_toolchain "$case_dir")
-  add_real_jq "$fakebin"
-  cat > "$fakebin/tmux" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = display-message ]; then
-  printf '%s\n' codex
-  exit 0
-fi
-exit 0
-SH
-  chmod +x "$fakebin/tmux"
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
 }
 
@@ -701,7 +664,7 @@ test_routine_bootstrap_confirmations_are_silent() {
   local out
   out=$(run_routine_bootstrap_fixture bash "$TMP_ROOT/routine-silent")
   [ -z "$out" ] || fail "routine bootstrap confirmations should be silent, got: $out"
-  pass "bootstrap keeps routine tasks-axi, harness, dispatch, and already-live liveness confirmations silent"
+  pass "bootstrap keeps routine tasks-axi and already-live liveness confirmations silent"
 }
 
 test_routine_bootstrap_contract_runs_under_system_bash() {
@@ -719,72 +682,10 @@ test_bootstrap_info_is_no_load_and_actionable_lines_trigger() {
   assert_contains "$trigger" "actionable diagnostic line" "bootstrap-diagnostics trigger should be action-scoped"
   assert_contains "$trigger" "BOOTSTRAP_INFO:" "bootstrap-diagnostics trigger should classify BOOTSTRAP_INFO as no-load"
   assert_not_contains "$trigger" "TASKS_AXI:" "tasks-axi availability must not trigger diagnostics loading"
-  assert_not_contains "$trigger" "CREW_HARNESS_OVERRIDE:" "harness override confirmation must not trigger diagnostics loading"
-  assert_not_contains "$trigger" "CREW_DISPATCH: active" "active dispatch confirmation must not trigger diagnostics loading"
   assert_not_contains "$trigger" "already-live" "already-live secondmate liveness must not trigger diagnostics loading"
   pass "bootstrap diagnostics trigger excludes benign lines and keeps actionable prefixes"
 }
 
-test_crew_dispatch_active_rules_are_verbose_bootstrap_info() {
-  local case_dir fakebin out expect
-  case_dir="$TMP_ROOT/dispatch-active"
-  mkdir -p "$case_dir/home/config"
-  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-  printf '%s\n' '{"rules":[{"when":"fresh news","use":{"harness":"grok"},"why":"current context"},{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}],"default":{"harness":"claude","model":"haiku","effort":"low"}}' > "$case_dir/home/config/crew-dispatch.json"
-  fakebin=$(make_fake_toolchain "$case_dir")
-  add_real_jq "$fakebin"
-
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-  [ -z "$out" ] || fail "active dispatch profile should be silent by default, got: $out"
-
-  out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-    FM_BOOTSTRAP_VERBOSE_FACTS=1 FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-
-  expect=$'BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json\nBOOTSTRAP_INFO: crew dispatch rule: fresh news -> grok\nBOOTSTRAP_INFO: crew dispatch rule: big feature -> quota-balanced[claude/claude-sonnet-5/high, codex/gpt-5.5/high]\nBOOTSTRAP_INFO: crew dispatch default: claude/haiku/low'
-  [ "$out" = "$expect" ] || fail "active dispatch verbose info block mismatch"$'\n'"expected: $expect"$'\n'"actual:   $out"
-  pass "bootstrap surfaces active crew-dispatch rules only as verbose BOOTSTRAP_INFO"
-}
-
-test_crew_dispatch_validation() {
-  local label body expect mode case_dir fakebin out n
-  n=0
-  while IFS='^' read -r label body mode expect; do
-    [ -n "$label" ] || continue
-    n=$((n + 1))
-    case_dir="$TMP_ROOT/dispatch-$n"
-    mkdir -p "$case_dir/home/config"
-    printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
-    printf '%s\n' "$body" > "$case_dir/home/config/crew-dispatch.json"
-    fakebin=$(make_fake_toolchain "$case_dir")
-    add_real_jq "$fakebin"
-    out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" FM_ROOT_OVERRIDE="$case_dir/home" \
-      FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh")
-    case "$mode" in
-      empty)
-        [ -z "$out" ] || fail "$label: expected silence, got: $out" ;;
-      exact)
-        [ "$out" = "$expect" ] || fail "$label: expected '$expect', got: $out" ;;
-      grep)
-        printf '%s\n' "$out" | grep -Fx "$expect" >/dev/null || fail "$label: missing '$expect' (got: $out)" ;;
-    esac
-  done <<'ROWS'
-malformed dispatch config is flagged^{"rules":[^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON
-unverified dispatch harness is flagged^{"rules":[{"when":"anything","use":{"harness":"spaceship"}}],"default":{"harness":"codex"}}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unverified harness: spaceship
-unsupported codex max effort is flagged^{"rules":[{"when":"big feature","use":{"harness":"codex","model":"gpt-5","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
-unsupported grok max effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"max"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:max
-unsupported grok xhigh effort is flagged^{"rules":[{"when":"deep current work","use":{"harness":"grok","model":"grok-4","effort":"xhigh"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: grok:xhigh
-pi max effort is accepted^{"rules":[{"when":"deep coding","use":{"harness":"pi","model":"openai-codex/gpt-5.6-sol","effort":"max"}}]}^empty^
-unsupported opencode effort is flagged^{"rules":[{"when":"opencode work","use":{"harness":"opencode","model":"anthropic/claude-sonnet-4-5","effort":"high"}}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: opencode:high
-array use with quota-balanced is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude","model":"claude-sonnet-5","effort":"high"},{"harness":"codex","model":"gpt-5.5","effort":"high"}],"select":"quota-balanced"}]}^empty^
-array use without select is accepted^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}]}]}^empty^
-empty array use is flagged^{"rules":[{"when":"big feature","use":[]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each rule needs at least one use profile
-array profile without harness is flagged^{"rules":[{"when":"big feature","use":[{"model":"gpt-5.5"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - each use profile needs harness
-unknown select is flagged^{"rules":[{"when":"big feature","use":[{"harness":"claude"},{"harness":"codex"}],"select":"mystery"}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - unknown select: mystery
-array profile unsupported effort is flagged^{"rules":[{"when":"big feature","use":[{"harness":"codex","effort":"max"}]}]}^exact^CREW_DISPATCH: invalid config/crew-dispatch.json - invalid effort: codex:max
-ROWS
-  pass "bootstrap validates crew-dispatch.json and reports malformed or unverified configs"
-}
 
 test_bootstrap_reporting
 test_no_mistakes_min_version
@@ -804,6 +705,3 @@ test_fleet_sync_timeout_empty_override_uses_default
 test_fleet_sync_timeout_is_computed_before_launch
 test_routine_bootstrap_confirmations_are_silent
 test_routine_bootstrap_contract_runs_under_system_bash
-test_bootstrap_info_is_no_load_and_actionable_lines_trigger
-test_crew_dispatch_active_rules_are_verbose_bootstrap_info
-test_crew_dispatch_validation

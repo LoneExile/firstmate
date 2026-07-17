@@ -21,10 +21,9 @@ JQ_DIR=$(command -v jq 2>/dev/null) && JQ_DIR=$(dirname "$JQ_DIR") || JQ_DIR=
 [ -n "$JQ_DIR" ] && BASE_PATH="$JQ_DIR:$BASE_PATH"
 TMP_ROOT=$(fm_test_tmproot fm-x-mode-tests)
 
-# omp (Oh My Pi) exports OMPCODE=1 (and CLAUDECODE=1) into child shells, and
-# fm-harness.sh detect_own checks OMPCODE first. Drop it so an ambient omp
-# session can't override the CLAUDECODE=1 harness pins below (CI has no such
-# marker). Extends the ambient-marker isolation from #432.
+# omp (Oh My Pi) exports OMPCODE=1 (and CLAUDECODE=1) into child shells.
+# Drop it so an ambient omp session cannot affect the test below.
+# Extends the ambient-marker isolation from #432.
 unset OMPCODE
 
 # A fakebin `curl` that mimics the relay: it reads its behavior from env
@@ -773,9 +772,9 @@ test_bootstrap_opt_out_cleanup() {
   assert_present "$home/config/x-mode.env" "opt-in must create the cadence config"
   # Opt out: empty the token, re-run bootstrap -> artifacts removed + one off line.
   printf 'FMX_PAIRING_TOKEN=\n' > "$home/.env"
-  out=$(CLAUDECODE=1 FM_HOME="$home" "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  out=$(OMPCODE=1 FM_HOME="$home" "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
   assert_contains "$out" "FMX: X mode off" "opt-out must announce X mode off when it removed artifacts"
-  assert_contains "$out" "Claude Code background task" "opt-out remediation must use the harness-aware repair renderer"
+  assert_contains "$out" "OMP tool fm_watch_arm_omp" "opt-out remediation must use the harness-aware repair renderer"
   assert_not_contains "$out" "bin/fm-watch-arm.sh --restart" "opt-out remediation must not hardcode a background-arm restart"
   assert_absent "$home/state/x-watch.check.sh" "opt-out must remove the shim"
   assert_absent "$home/config/x-mode.env" "opt-out must remove the cadence config"

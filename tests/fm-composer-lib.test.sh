@@ -9,7 +9,7 @@
 #      (unsafe-for-injection), never `empty`. This is the safety fix.
 #   2. The SAME shell glyph INSIDE a bordered composer box is the harness's own
 #      prompt and still reads `empty` (existing behavior preserved).
-#   3. The AGENT prompt glyphs `❯` (claude) and `›` (codex) are a genuine empty
+#   3. The AGENT prompt glyphs `❯` (omp/claude) and `›` (legacy) are a genuine empty
 #      agent composer either way, bordered or bare.
 #   4. Real unsubmitted text reads `pending`; a known idle placeholder reads
 #      `empty`.
@@ -59,7 +59,7 @@ test_bare_shell_prompt_with_command_is_not_empty() {
   pass "fm_composer_classify_content: a bare shell prompt carrying a command is not empty"
 }
 
-# --- Preserved: shell glyph inside a composer box is the harness prompt ------
+# --- Preserved: shell glyph inside a bordered composer box is the agent prompt ------
 
 test_bordered_shell_glyph_is_empty() {
   local g out
@@ -68,18 +68,18 @@ test_bordered_shell_glyph_is_empty() {
     [ "$out" = empty ] \
       || fail "a shell glyph '$g' inside a bordered composer box must read empty, got '$out'"
   done
-  pass "fm_composer_classify_content: a bare prompt glyph inside a bordered composer box reads empty (claude's own idle composer)"
+  pass "fm_composer_classify_content: a bare prompt glyph inside a bordered composer box reads empty (agent's own idle composer)"
 }
 
 # --- Agent glyphs are empty either way --------------------------------------
 
 test_agent_glyphs_are_empty_bordered_and_bare() {
   local out
-  out=$(classify 0 '❯'); [ "$out" = empty ] || fail "bare claude '❯' should read empty, got '$out'"
-  out=$(classify 0 '›'); [ "$out" = empty ] || fail "bare codex '›' should read empty, got '$out'"
-  out=$(classify 1 '❯'); [ "$out" = empty ] || fail "bordered claude '❯' should read empty, got '$out'"
-  out=$(classify 1 '›'); [ "$out" = empty ] || fail "bordered codex '›' should read empty, got '$out'"
-  pass "fm_composer_classify_content: agent prompt glyphs (❯ claude, › codex) read empty bordered or bare"
+  out=$(classify 0 '❯'); [ "$out" = empty ] || fail "bare omp '❯' should read empty, got '$out'"
+  out=$(classify 0 '›'); [ "$out" = empty ] || fail "bare legacy '›' should read empty, got '$out'"
+  out=$(classify 1 '❯'); [ "$out" = empty ] || fail "bordered omp '❯' should read empty, got '$out'"
+  out=$(classify 1 '›'); [ "$out" = empty ] || fail "bordered legacy '›' should read empty, got '$out'"
+  pass "fm_composer_classify_content: agent prompt glyphs (❯ omp, › legacy) read empty bordered or bare"
 }
 
 # --- Empty content and idle placeholder -------------------------------------
@@ -93,9 +93,9 @@ test_empty_content_is_empty() {
 
 test_idle_placeholder_is_empty() {
   local idle='^Type a message\.\.\.$' out
-  # Placeholder with no prompt glyph (grok's bordered empty composer).
+  # Placeholder with no prompt glyph (a bordered empty composer).
   out=$(classify 1 'Type a message...' "$idle")
-  [ "$out" = empty ] || fail "the grok idle placeholder should read empty, got '$out'"
+  [ "$out" = empty ] || fail "the idle placeholder should read empty, got '$out'"
   # Placeholder after an agent glyph (post-strip match).
   out=$(classify 0 '❯ Type a message...' "$idle")
   [ "$out" = empty ] || fail "the idle placeholder after a glyph should read empty, got '$out'"

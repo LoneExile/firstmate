@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # Strict no-emit contract check for both tracked OMP primary extensions.
-# Mirrors tests/fm-pi-primary-types.test.sh. OMP (Oh My Pi) is a Pi fork; the
-# extensions import their types from @oh-my-pi/pi-coding-agent. OMP does not
-# bundle @types/node, so this test sources Node declarations from the global npm
-# root and SKIPS cleanly when the OMP package or Node declarations are not
-# resolvable (e.g. on CI, where OMP is not installed) - the same skip-if-absent
-# philosophy as the Pi test. Set FM_OMP_PACKAGE_DIR / FM_NODE_TYPES_DIR to point
-# at non-global locations.
+# OMP (Oh My Pi) is a Pi fork; the extensions import their types from
+# @oh-my-pi/pi-coding-agent. OMP does not bundle @types/node, so this test
+# sources Node declarations from the global npm root and SKIPS cleanly when the
+# OMP package or Node declarations are not resolvable (e.g. on CI, where OMP is
+# not installed) - skip-if-absent philosophy. Set FM_OMP_PACKAGE_DIR /
+# FM_NODE_TYPES_DIR to point at non-global locations.
 set -u
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

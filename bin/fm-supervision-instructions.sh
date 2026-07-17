@@ -76,19 +76,11 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-if [ -z "$HARNESS" ]; then
-  HARNESS=$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)
-fi
-
-case "$HARNESS" in
-  claude|codex|opencode|pi|grok|omp) SNIPPET="$DOC_DIR/$HARNESS.md" ;;
-  *) HARNESS=unknown; SNIPPET="$DOC_DIR/unknown.md" ;;
-esac
+# firstmate runs only on omp; the harness and its supervision snippet are constant.
+HARNESS=omp
+SNIPPET="$DOC_DIR/omp.md"
 [ -f "$SNIPPET" ] || SNIPPET="$DOC_DIR/unknown.md"
 
-checkpoint_seconds=${FM_CODEX_WATCH_CHECKPOINT:-180}
-pi_ext="$FM_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
-pi_turnend_ext="$FM_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
 omp_ext="$FM_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
 omp_turnend_ext="$FM_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
 x_mode_env="$CONFIG/x-mode.env"
@@ -108,8 +100,6 @@ fi
 render_snippet() {
   local line
   while IFS= read -r line || [ -n "$line" ]; do
-    line=${line//__FM_PI_EXT__/$pi_ext}
-    line=${line//__FM_PI_TURNEND_EXT__/$pi_turnend_ext}
     line=${line//__FM_OMP_EXT__/$omp_ext}
     line=${line//__FM_OMP_TURNEND_EXT__/$omp_turnend_ext}
     line=${line//__FM_X_MODE_ENV_SH__/$x_mode_env_sh}
@@ -137,23 +127,8 @@ repair_line() {
   fi
 
   case "$HARNESS" in
-    claude)
-      printf '%s%s\n' "$prefix" 'resume supervision with bin/fm-watch-arm.sh as its own Claude Code background task, never shell &.'
-      ;;
-    codex)
-      printf '%s%s%s%s\n' "$prefix" 'resume supervision with a foreground checkpoint: bin/fm-watch-checkpoint.sh --seconds ' "$checkpoint_seconds" '.'
-      ;;
-    pi)
-      printf '%s%s%s%s%s%s\n' "$prefix" 'resume supervision with the Pi tool fm_watch_arm_pi or restart Pi with -e ' "$pi_turnend_ext" ' -e ' "$pi_ext" ' if the extension is not loaded.'
-      ;;
     omp)
       printf '%s%s%s%s%s%s\n' "$prefix" 'resume supervision with the OMP tool fm_watch_arm_omp or restart omp with -e ' "$omp_turnend_ext" ' -e ' "$omp_ext" ' if the extension is not loaded.'
-      ;;
-    opencode)
-      printf '%s%s\n' "$prefix" 'resume supervision by letting the OpenCode TUI plugin arm after idle; use bin/fm-watch-arm.sh only as a manual recovery probe if the plugin reports failure.'
-      ;;
-    grok)
-      printf '%s%s\n' "$prefix" 'resume supervision with bin/fm-watch-arm.sh as its own Grok tracked background task, never shell &.'
       ;;
     *)
       printf '%s%s\n' "$prefix" 'resume supervision according to the session-start block for this harness; do not use shell &.'

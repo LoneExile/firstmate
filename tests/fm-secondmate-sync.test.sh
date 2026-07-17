@@ -51,7 +51,7 @@ new_world() {
   git init -q -b main "$w/main"
   # Mirror the real repo: the gitignored operational dirs never dirty a worktree,
   # so a secondmate home's data/state/projects can never block its fast-forward.
-  printf 'projects/\nstate/\ndata/\n.no-mistakes/\nconfig/crew-harness\n' > "$w/main/.gitignore"
+  printf 'projects/\nstate/\ndata/\n.no-mistakes/\n' > "$w/main/.gitignore"
   printf 'v1\n' > "$w/main/AGENTS.md"
   printf 'r1\n' > "$w/main/README.md"
   mkdir -p "$w/main/bin" "$w/main/.agents/skills"
@@ -297,7 +297,7 @@ if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then
   printf '%s\n' "$*" >> "$FM_FAKE_TMUX_LOG"
 fi
 case "$*" in
-  *display-message*'#{pane_current_command}'*) printf '%s\n' codex; exit 0 ;;
+  *display-message*'#{pane_current_command}'*) printf '%s\n' omp; exit 0 ;;
   *display-message*'#{pane_id}'*) printf '%s\n' '%1'; exit 0 ;;
   *display-message*'#{cursor_y}'*) printf '%s\n' 0; exit 0 ;;
   *'send-keys'*' -l '*)
@@ -378,14 +378,17 @@ test_bootstrap_sweep_nudges_only_instruction_change() {
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
     "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  # Strip SECONDMATE_LIVENESS lines (expected in omp-only with tmux backend) before
+  # asserting on nudge/no-nudge content.
+  out_sync=$(printf '%s\n' "$out" | grep -v '^SECONDMATE_LIVENESS:')
 
-  info_line=$(printf '%s\n' "$out" | grep '^BOOTSTRAP_INFO: nudged fm-sm-instr ' || true)
+  info_line=$(printf '%s\n' "$out_sync" | grep '^BOOTSTRAP_INFO: nudged fm-sm-instr ' || true)
   [ -n "$info_line" ] || fail "no BOOTSTRAP_INFO nudge line emitted (got: $out)"
   assert_contains "$info_line" "firstmate was updated to the latest - please re-read your AGENTS.md to pick up the new instructions." \
     "successful nudge report should include the exact message sent"
-  assert_not_contains "$out" "NUDGE_SECONDMATES:" "successful nudge must not leave a firstmate action item"
-  assert_not_contains "$out" "sm-readme" "readme-only advance is not nudged"
-  assert_not_contains "$out" "sm-current" "already-current secondmate is not nudged"
+  assert_not_contains "$out_sync" "NUDGE_SECONDMATES:" "successful nudge must not leave a firstmate action item"
+  assert_not_contains "$out_sync" "sm-readme" "readme-only advance is not nudged"
+  assert_not_contains "$out_sync" "sm-current" "already-current secondmate is not nudged"
   assert_contains "$(cat "$log")" "[fm-from-firstmate]" "nudge send should use the marked fm-send secondmate path"
   assert_contains "$(cat "$log")" "firstmate was updated to the latest - please re-read your AGENTS.md" \
     "nudge send should type the exact re-read message"
@@ -513,7 +516,8 @@ test_bootstrap_nudge_retry_is_idempotent() {
 
   out2=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
-  [ -z "$out2" ] || fail "idempotent retry should converge to silence, got: $out2"
+  out2_sync=$(printf '%s\n' "$out2" | grep -v '^SECONDMATE_LIVENESS:')
+  [ -z "$out2_sync" ] || fail "idempotent retry should converge to silence, got: $out2"
   pass "T8d bootstrap nudge retry is idempotent after success"
 }
 
@@ -610,7 +614,7 @@ test_nudge_retry_uses_fresh_herdr_endpoint_after_respawn() {
     printf 'window=%s\n' "$stale"
     printf 'backend=herdr\n'
     printf 'kind=secondmate\n'
-    printf 'harness=claude\n'
+    printf 'harness=omp\n'
     printf 'home=%s/sm-instr\n' "$w"
   } > "$meta"
 
@@ -716,7 +720,7 @@ SH
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" codex --secondmate >/dev/null 2>&1 || true
+    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" omp --secondmate >/dev/null 2>&1 || true
 
   [ "$(head_of "$w/sm")" = "$c2" ] \
     || fail "spawn did not fast-forward the secondmate worktree to the primary's HEAD"
@@ -750,7 +754,7 @@ SH
     FM_STATE_OVERRIDE="$w/home/state" FM_DATA_OVERRIDE="$w/home/data" \
     FM_PROJECTS_OVERRIDE="$w/home/projects" FM_CONFIG_OVERRIDE="$w/home/config" \
     FM_SPAWN_NO_GUARD=1 \
-    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" codex --secondmate >/dev/null 2>"$err" || true
+    "$ROOT/bin/fm-spawn.sh" sm "$w/sm" omp --secondmate >/dev/null 2>"$err" || true
 
   assert_contains "$(cat "$err")" \
     "warning: secondmate sm sync skipped before launch: dirty working tree" \

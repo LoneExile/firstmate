@@ -59,8 +59,7 @@
 # The tradeoff this ordering accepts: a refused (read-only) session must not
 # go dark. So on refusal, bootstrap still runs (in FM_BOOTSTRAP_DETECT_ONLY=1
 # mode) for its read-only detect lines - missing tools, gh auth, the
-# worktree-tangle check, the harness override, crew-dispatch validation,
-# tasks-axi and quota-axi tool checks, and tasks-axi availability - none of
+# worktree-tangle check, the tasks-axi tool check, and tasks-axi availability - none of
 # which mutate shared state and all of which are safe to compute from a second
 # session.
 # Only the five mutating sweeps and the wake-queue drain are skipped.
@@ -228,7 +227,7 @@ hash_file() {
   fi
 }
 
-pi_extension_loaded() {
+omp_extension_loaded() {
   local marker=$1 expected_version=$2 lock=$3 marker_version marker_pid lock_pid
   [ -f "$marker" ] && [ -f "$lock" ] && [ -n "$expected_version" ] || return 1
   marker_version=$(sed -n '1p' "$marker")
@@ -305,19 +304,7 @@ AFK_PRESENT=0
 X_MODE_PRESENT=0
 [ -f "$CONFIG/x-mode.env" ] && X_MODE_PRESENT=1
 
-if [ "$PRIMARY_HARNESS" = pi ]; then
-  PI_EXT="$FM_ROOT/.pi/extensions/fm-primary-pi-watch.ts"
-  PI_TURNEND_EXT="$FM_ROOT/.pi/extensions/fm-primary-turnend-guard.ts"
-  PI_WATCH_MARKER="$STATE/.pi-watch-extension-loaded"
-  PI_TURNEND_MARKER="$STATE/.pi-turnend-extension-loaded"
-  PI_LOCK="$STATE/.lock"
-  PI_WATCH_VERSION=$(hash_file "$PI_EXT" || printf '')
-  PI_TURNEND_VERSION=$(hash_file "$PI_TURNEND_EXT" || printf '')
-  if ! pi_extension_loaded "$PI_WATCH_MARKER" "$PI_WATCH_VERSION" "$PI_LOCK" \
-    || ! pi_extension_loaded "$PI_TURNEND_MARKER" "$PI_TURNEND_VERSION" "$PI_LOCK"; then
-    printf 'PI_WATCH_EXTENSION: not loaded - approve Pi project trust once per clone, then restart plain pi so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project hooks are not trusted\n' "$PI_TURNEND_EXT" "$PI_EXT" "$PI_TURNEND_EXT" "$PI_EXT"
-  fi
-elif [ "$PRIMARY_HARNESS" = omp ]; then
+if [ "$PRIMARY_HARNESS" = omp ]; then
   OMP_EXT="$FM_ROOT/.omp/extensions/fm-primary-omp-watch.ts"
   OMP_TURNEND_EXT="$FM_ROOT/.omp/extensions/fm-primary-turnend-guard.ts"
   OMP_WATCH_MARKER="$STATE/.omp-watch-extension-loaded"
@@ -325,8 +312,8 @@ elif [ "$PRIMARY_HARNESS" = omp ]; then
   OMP_LOCK="$STATE/.lock"
   OMP_WATCH_VERSION=$(hash_file "$OMP_EXT" || printf '')
   OMP_TURNEND_VERSION=$(hash_file "$OMP_TURNEND_EXT" || printf '')
-  if ! pi_extension_loaded "$OMP_WATCH_MARKER" "$OMP_WATCH_VERSION" "$OMP_LOCK" \
-    || ! pi_extension_loaded "$OMP_TURNEND_MARKER" "$OMP_TURNEND_VERSION" "$OMP_LOCK"; then
+  if ! omp_extension_loaded "$OMP_WATCH_MARKER" "$OMP_WATCH_VERSION" "$OMP_LOCK" \
+    || ! omp_extension_loaded "$OMP_TURNEND_MARKER" "$OMP_TURNEND_VERSION" "$OMP_LOCK"; then
     printf 'OMP_WATCH_EXTENSION: not loaded - approve OMP project trust once per clone, then restart plain omp so %s and %s auto-load for turn-end guard and background wake coverage; use -e %s -e %s only if project extensions are not trusted\n' "$OMP_TURNEND_EXT" "$OMP_EXT" "$OMP_TURNEND_EXT" "$OMP_EXT"
   fi
 fi

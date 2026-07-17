@@ -6,8 +6,8 @@
 # saw an idle pane as holding pending input. Two rendering styles are covered by
 # the one shared ANSI-aware owner (fm_composer_strip_ghost, bin/fm-composer-lib.sh,
 # reached here through the fm_tmux_strip_ghost thin adapter):
-#   - DIM/FAINT (SGR 2): claude's rotating prompt suggestion, codex's idle tip.
-#   - a dark/muted TRUECOLOR foreground: grok's placeholder/hint text.
+#   - DIM/FAINT (SGR 2): omp's rotating prompt suggestion.
+#   - a dark/muted TRUECOLOR foreground: a legacy ghost pattern.
 # These tests pin:
 #   1. fm_tmux_strip_ghost drops dim/faint AND dark-truecolor runs, keeping
 #      normal-intensity, brightly-coloured text.
@@ -99,8 +99,8 @@ test_strip_ghost_keeps_colored_text_with_2_payloads() {
   local out
   # These pin that the awk's truecolor/256-color `2` payload SELECTOR is not
   # mistaken for the SGR-2 dim attribute. The truecolor foregrounds use a BRIGHT
-  # colour (grok's real-input RGB 224,222,244, luminance ~225), because a DARK
-  # truecolor foreground is now itself a ghost signal (grok's placeholder) and is
+  # colour (the observed dark-foreground RGB 224,222,244, luminance ~225), because a DARK
+  # truecolor foreground is now itself a ghost signal (ghost placeholder) and is
   # covered by test_strip_ghost_drops_dark_truecolor_ghost below.
   out=$(printf '\033[38;5;2mgreen typed\033[0m\n' | fm_tmux_strip_ghost)
   [ "$out" = "green typed" ] || fail "8-bit color payload 2 was treated as dim: '$out'"
@@ -119,15 +119,15 @@ test_strip_ghost_keeps_colored_text_with_2_payloads() {
   pass "fm_tmux_strip_ghost keeps bright colored text with 2 payloads"
 }
 
-# --- Dark truecolor foreground is ghost (grok placeholder), dropped ----------
+# --- Dark truecolor foreground is ghost (placeholder), dropped ----------
 
 test_strip_ghost_drops_dark_truecolor_ghost() {
   local out
-  # grok renders its placeholder/hint text with a dark, muted truecolor
+  # a dark-foreground placeholder pattern (verified historically)/hint text with a dark, muted truecolor
   # foreground (empirically 38;2;50;47;70 .. 38;2;110;106;134, luminance ~51..110,
-  # verified live against grok 0.2.93; the pristine "Type a message..." placeholder
-  # was this shape in grok 0.2.82). The shared owner drops it while keeping the
-  # bright prompt glyph, so an idle grok composer never reads as pending.
+  # the pristine "Type a message..." placeholder
+  # was this shape historically). The shared owner drops it while keeping the
+  # bright prompt glyph, so an idle dark-placeholder composer never reads as pending.
   out=$(printf '\xe2\x9d\xaf \033[38;2;50;47;70mType a message...\033[0m\n' | fm_tmux_strip_ghost)
   [ "$out" = "$(printf '\xe2\x9d\xaf ')" ] || fail "dark truecolor ghost not dropped: '$out'"
   out=$(printf '\033[38;2;110;106;134mplaceholder hint text\033[39m\n' | fm_tmux_strip_ghost)
@@ -135,7 +135,7 @@ test_strip_ghost_drops_dark_truecolor_ghost() {
   # The colon form drops too.
   out=$(printf '\xe2\x9d\xaf \033[38:2::86:82:110mmuted\033[0m\n' | fm_tmux_strip_ghost)
   [ "$out" = "$(printf '\xe2\x9d\xaf ')" ] || fail "dark colon-truecolor ghost not dropped: '$out'"
-  pass "fm_tmux_strip_ghost drops a dark/muted truecolor foreground (grok placeholder)"
+  pass "fm_tmux_strip_ghost drops a dark/muted truecolor foreground (ghost placeholder)"
 }
 
 # --- fm_pane_input_pending: dim ghost is not pending ------------------------
@@ -145,7 +145,7 @@ test_dim_ghost_only_composer_is_not_pending() {
   dir="$TMP_ROOT/ghost-only"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
-  # The exact rendering claude emits: a normal prompt glyph + a DIM predicted prompt.
+  # The exact rendering omp emits: a normal prompt glyph + a DIM predicted prompt.
   printf '\xe2\x9d\xaf \033[2mWhat is the largest country by area?\033[0m\n' > "$capture"
   if PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \
      fm_pane_input_pending "fakepane"; then
@@ -159,7 +159,7 @@ test_dim_ghost_inside_bordered_composer_is_not_pending() {
   dir="$TMP_ROOT/ghost-bordered"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
-  # Bordered composer (claude box) holding only dim ghost text.
+  # Bordered composer (omp box) holding only dim ghost text.
   printf '\xe2\x94\x82 \033[2mtry the other approach instead\033[0m \xe2\x94\x82\n' > "$capture"
   if PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \
      fm_pane_input_pending "fakepane"; then
@@ -207,18 +207,18 @@ test_colored_text_with_2_payload_still_pending() {
 
 test_dark_truecolor_ghost_only_composer_is_not_pending() {
   local dir fb capture
-  dir="$TMP_ROOT/grok-ghost"; mkdir -p "$dir"
+  dir="$TMP_ROOT/ghost-dark"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
-  # A grok-style pristine composer: bright prompt glyph + a dark/muted truecolor
-  # placeholder. It must read NOT pending (the grok TRUECOLOR gap, now covered by
-  # the same ANSI-aware owner as claude's dim ghost).
+  # A dark-placeholder composer: bright prompt glyph + a dark/muted truecolor
+  # placeholder. It must read NOT pending (the dark-foreground ghost gap, now covered by
+  # the same ANSI-aware owner as omp's dim ghost).
   printf '\xe2\x9d\xaf \033[38;2;50;47;70mType a message...\033[0m\n' > "$capture"
   if PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \
      fm_pane_input_pending "fakepane"; then
     fail "dark truecolor ghost-only composer falsely read as pending"
   fi
-  pass "fm_pane_input_pending: a dark truecolor ghost-only composer (grok placeholder) is NOT pending"
+  pass "fm_pane_input_pending: a dark truecolor ghost-only composer (ghost placeholder) is NOT pending"
 }
 
 test_dark_truecolor_bare_shell_prompt_is_unknown() {
@@ -241,7 +241,7 @@ test_real_text_with_trailing_ghost_is_pending() {
   dir="$TMP_ROOT/mixed"; mkdir -p "$dir"
   fb=$(make_fake_tmux "$dir")
   capture="$dir/styled.txt"
-  # A human typed "deploy" and claude appended a dim ghost completion. The real
+  # A human typed "deploy" and omp appended a dim ghost completion. The real
   # text must win - the composer is pending.
   printf '\xe2\x9d\xaf deploy\033[2m the staging environment now\033[0m\n' > "$capture"
   PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY=0 \

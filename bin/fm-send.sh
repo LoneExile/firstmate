@@ -95,7 +95,6 @@ fm_send_resolve_target() {  # <raw-target>
 
   RESOLVED_TARGET=""
   TARGET_BACKEND=""
-  TARGET_HARNESS=""
   EXPECTED_LABEL=""
   TARGET_META=""
   TARGET_SELECTOR=""
@@ -113,7 +112,6 @@ fm_send_resolve_target() {  # <raw-target>
     RESOLVED_TARGET=$target
     TARGET_BACKEND=$backend
     TARGET_META=$meta
-    TARGET_HARNESS=$(fm_meta_get "$meta" harness)
     EXPECTED_LABEL=$(fm_backend_expected_label_of_selector "$raw" "$STATE")
     TARGET_SELECTOR=1
     return 0
@@ -146,7 +144,6 @@ fm_send_resolve_target() {  # <raw-target>
     RESOLVED_TARGET=$target
     TARGET_BACKEND=$(fm_backend_of_meta "$meta")
     TARGET_META=$meta
-    TARGET_HARNESS=$(fm_meta_get "$meta" harness)
     RESOLUTION_TRIED="explicit target '$raw' matched $meta; backend=$TARGET_BACKEND"
     return 0
   fi
@@ -191,10 +188,6 @@ if [ -n "$TARGET_SELECTOR" ] && [ -n "$TARGET_META" ] && [ "$(fm_meta_get "$TARG
   MARK_FROM_FIRSTMATE=1
 fi
 
-# Resolve the target's harness from its meta (recorded by fm-spawn), used only to
-# scope the codex `$<skill>` popup-settle below. A task selector carries
-# meta; an explicit backend-target escape hatch has none, so its harness is
-# unknown and treated as non-codex (the safe default that keeps the fast path).
 # The target's BACKEND comes from selector meta, from matching an explicit target
 # back to recorded meta, or from strict explicit-target shape validation.
 # Do not add a separate passive liveness preflight here. Active send paths own
@@ -213,19 +206,11 @@ else
   if [ "$MARK_FROM_FIRSTMATE" = 1 ]; then
     fm_message_mark_from_firstmate "$MESSAGE" MESSAGE
   fi
-  # Slash commands open a completion popup in some TUIs (verified on codex);
-  # submitting too fast selects nothing, so give the popup time to settle before
-  # the (retried) Enter. Codex opens the same kind of popup for a `$<skill>`
-  # invocation, so a `$...` message to a codex target gets the same settle. That
-  # `$` case is scoped to codex on purpose: unlike `/`, a leading `$` commonly
-  # starts ordinary text ("$5/month", "$HOME"), so a universal `$` rule would
-  # needlessly slow plain text to claude/opencode/pi. The target backend's
-  # verified submit retry still backs the settle up either way.
+  # Slash commands open a completion popup in some TUIs; submitting too fast
+  # selects nothing, so give the popup time to settle before the (retried)
+  # Enter. The target backend's verified submit retry still backs the settle up.
   case "$*" in
     /*) settle=1.2 ;;
-    \$*)
-      if [ "$TARGET_HARNESS" = codex ]; then settle=1.2; else settle=0.3; fi
-      ;;
     *) settle=0.3 ;;
   esac
   retries=${FM_SEND_RETRIES:-3}

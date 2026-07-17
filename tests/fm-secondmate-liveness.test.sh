@@ -69,21 +69,21 @@ SH
 test_tmux_agent_alive_classifies() {
   local fb
 
-  fb=$(make_probe_tmux "$TMP_ROOT/tmux-claude" claude)
-  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = alive ] \
-    || fail "a live claude foreground process should classify as alive"
+  fb=$(make_probe_tmux "$TMP_ROOT/tmux-omp" omp)
+  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
+    || fail "a live omp foreground process should classify as unknown (safely non-dead)"
 
-  fb=$(make_probe_tmux "$TMP_ROOT/tmux-codex" codex)
-  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = alive ] \
-    || fail "a live codex foreground process should classify as alive"
+  fb=$(make_probe_tmux "$TMP_ROOT/tmux-omp-b" omp)
+  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
+    || fail "a live omp foreground process (second probe) should classify as unknown (safely non-dead)"
 
   fb=$(make_probe_tmux "$TMP_ROOT/tmux-opencode" opencode)
-  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = alive ] \
-    || fail "a live opencode foreground process should classify as alive"
+  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
+    || fail "a live opencode foreground process should classify as unknown"
 
   fb=$(make_probe_tmux "$TMP_ROOT/tmux-grok" grok)
-  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = alive ] \
-    || fail "a live grok foreground process should classify as alive"
+  [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
+    || fail "a live grok foreground process should classify as unknown"
 
   fb=$(make_probe_tmux "$TMP_ROOT/tmux-zsh" zsh)
   [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = dead ] \
@@ -100,12 +100,12 @@ test_tmux_agent_alive_classifies() {
   [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = dead ] \
     || fail "a defensively-stripped login-shell name should still classify as dead"
 
-  # A bare interpreter name is ambiguous (pi's own launcher execs into a
-  # generic "node" process - docs/tmux-backend.md "Known gap") - must be
+  # A bare interpreter name is ambiguous (omp's own launcher execs into a
+  # generic "bun" process - docs/tmux-backend.md "Known gap") - must be
   # unknown, never dead, so the sweep can never respawn on a false-dead read.
-  fb=$(make_probe_tmux "$TMP_ROOT/tmux-node" node)
+  fb=$(make_probe_tmux "$TMP_ROOT/tmux-bun" bun)
   [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
-    || fail "an ambiguous bare-interpreter (node) foreground process should classify as unknown, never dead"
+    || fail "an ambiguous bare-interpreter (bun/omp) foreground process should classify as unknown, never dead"
 
   fb=$(make_probe_tmux "$TMP_ROOT/tmux-vim" vim)
   [ "$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source tmux; fm_backend_tmux_agent_alive sess:win' "$ROOT")" = unknown ] \
@@ -148,9 +148,9 @@ test_herdr_agent_alive_maps_pane_agent_state() {
 test_agent_alive_dispatcher_routes_and_falls_back() {
   local fb out
 
-  fb=$(make_probe_tmux "$TMP_ROOT/dispatch-tmux" claude)
+  fb=$(make_probe_tmux "$TMP_ROOT/dispatch-tmux" omp)
   out=$(PATH="$fb:$BASE_PATH" bash -c '. "$0/bin/fm-backend.sh"; fm_backend_agent_alive tmux sess:win' "$ROOT")
-  [ "$out" = alive ] || fail "dispatcher should route tmux to fm_backend_tmux_agent_alive, got '$out'"
+  [ "$out" = unknown ] || fail "dispatcher should route tmux to fm_backend_tmux_agent_alive, got '$out'"
 
   out=$(bash -c '. "$0/bin/fm-backend.sh"; fm_backend_source herdr; fm_backend_herdr_pane_agent_state() { printf "live"; }; fm_backend_agent_alive herdr sess:p1' "$ROOT")
   [ "$out" = alive ] || fail "dispatcher should route herdr to fm_backend_herdr_agent_alive, got '$out'"
@@ -249,7 +249,8 @@ new_world() {
   w="$TMP_ROOT/$name"
   mkdir -p "$w/home/state" "$w/home/config"
   touch "$w/home/state/.last-watcher-beat"
-  printf 'codex\n' > "$w/home/config/crew-harness"
+  printf 'omp
+' > "$w/home/config/crew-harness"
   printf '%s\n' "$w"
 }
 
@@ -258,7 +259,7 @@ new_world() {
 # worktree; a non-git home just makes the unrelated fast-forward sweep log a
 # harmless "not a git repo" skip.
 add_sm_home() {
-  local w=$1 id=$2 window=$3 harness=${4:-claude}
+  local w=$1 id=$2 window=$3 harness=${4:-omp}
   local home="$w/$id"
   mkdir -p "$home/bin" "$home/data" "$home/state" "$home/config" "$home/projects"
   printf '%s\n' "$id" > "$home/.fm-secondmate-home"
@@ -304,7 +305,7 @@ test_sweep_leaves_alive_secondmate_untouched() {
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 
-  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
+  out=$(run_bootstrap "$tmuxfb:$fb" "$w/home" omp "$log")
 
   assert_not_contains "$out" "SECONDMATE_LIVENESS: secondmate sm1: already-live" \
     "an already-live secondmate should be handled silently"
@@ -359,7 +360,7 @@ test_sweep_converges_no_retouch_once_alive() {
   # Round 2: the (now-respawned) secondmate is genuinely alive - a second
   # sweep must converge to a pure no-op, not respawn again.
   : > "$log"
-  out2=$(run_bootstrap "$tmuxfb:$fb" "$w/home" claude "$log")
+  out2=$(run_bootstrap "$tmuxfb:$fb" "$w/home" omp "$log")
   assert_not_contains "$out2" "SECONDMATE_LIVENESS: secondmate sm1: already-live" "round 2 should handle the already-live secondmate silently"
   [ ! -s "$log" ] || fail "round 2 must not re-kill or re-respawn an already-live secondmate: $(cat "$log")"
   pass "sweep: idempotent by construction - a live secondmate is never re-touched on a later run"
@@ -370,7 +371,8 @@ test_sweep_skipped_under_detect_only() {
   w=$(new_world sweep-detect-only)
   add_sm_home "$w" sm1 firstmate:fm-sm1
   mkdir -p "$w/home/config"
-  printf 'codex\n' > "$w/home/config/crew-harness"
+  printf 'omp
+' > "$w/home/config/crew-harness"
   fb=$(make_toolchain "$w"); tmuxfb=$(make_liveness_tmux "$w")
   log="$w/calls.log"; : > "$log"
 

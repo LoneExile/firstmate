@@ -22,28 +22,17 @@ batched digest rather than per-wake injections.
    The flag survives a firstmate restart, so recovery re-enters afk when it is present.
 
 2. **Ensure the sub-supervisor daemon is running as a tracked background process.**
-   Its hosting differs by harness.
-   Pick the right path:
-   - **Harness WITH a native in-pane tracked-background tool** (e.g. claude's
-     background bash, grok's background tool): first run
-     `bin/fm-afk-launch.sh start-native`, then run
-     `FM_AFK_STATE_PREPARED=1 bin/fm-afk-start.sh` through that native tool.
-     This is a deliberate no-separate-terminal exception because the harness-hosted job creates no terminal or layout mutation, and a shell launcher cannot invoke a harness-native background tool.
-     The launcher still owns lifecycle state and records the no-terminal mode, while the daemon inherits and auto-discovers the captain pane.
-     If the native launch fails, run `bin/fm-afk-launch.sh stop` to roll back the prepared lifecycle.
-     Do not wrap it in `nohup ... &` (Codex/herdr can reap fire-and-forget shell children after a tool call returns).
-   - **Harness WITHOUT one** (e.g. pi): run `bin/fm-afk-launch.sh start`. It is
-     the single owner of the daemon terminal: it creates a NON-VISIBLE tracked
-     terminal for the current backend (a herdr dedicated `--no-focus` workspace,
-     a detached tmux session), records its exact id, and passes the captain pane
-     in as `FM_SUPERVISOR_TARGET` so the daemon injects into the captain, not its
-     own new pane. **Never manufacture a terminal by splitting the captain's
-     active pane** (`herdr pane split`): a split co-tenants the tab and visibly
-     shrinks the captain's pane (docs/herdr-backend.md "Away-mode daemon terminal
-     launch").
-   Both paths share `bin/fm-afk-start.sh` as the daemon entry.
-   The native path tells it that the launcher already prepared lifecycle state; the terminal-backed path lets the entry perform its existing state setup inside the new terminal.
-   It exits immediately if the identity-backed daemon lock already names a live process, otherwise it execs `bin/fm-supervise-daemon.sh` in the foreground.
+   Run `bin/fm-afk-launch.sh start`. It is the single owner of the daemon terminal:
+   it creates a NON-VISIBLE tracked terminal for the current backend (a herdr
+   dedicated `--no-focus` workspace, a detached tmux session), records its exact
+   id, and passes the captain pane in as `FM_SUPERVISOR_TARGET` so the daemon
+   injects into the captain, not its own new pane. **Never manufacture a terminal
+   by splitting the captain's active pane** (`herdr pane split`): a split
+   co-tenants the tab and visibly shrinks the captain's pane
+   (docs/herdr-backend.md "Away-mode daemon terminal launch").
+   `bin/fm-afk-start.sh` is the daemon entry: it exits immediately if the
+   identity-backed daemon lock already names a live process, otherwise it execs
+   `bin/fm-supervise-daemon.sh` in the foreground.
    The daemon is **presence-gated**: it injects escalations only while
    `state/.afk` exists, and stays quiet otherwise.
 
@@ -80,7 +69,7 @@ explicit word - the daemon just batches the notification.
 
 The daemon prefixes every injection with `FM_INJECT_MARK` (U+2063 INVISIBLE SEPARATOR), which has no normal keyboard keystroke and survives terminal transport as UTF-8 text.
 This is how firstmate tells a daemon escalation apart from a real message in the same pane.
-The marker travels with the message text; it does not rely on harness-level typed-vs-injected detection, which is not portable across claude, codex, opencode, pi, grok, and omp.
+The marker travels with the message text; it does not rely on harness-level typed-vs-injected detection, which is not portable across harnesses.
 
 ## Busy-guard and composer guard
 
@@ -92,7 +81,7 @@ backend (tmux or herdr; see "Auto-discovered supervisor pane" below):
 - **Composer-state guard** - `inject_msg` reads the full `empty`/`pending`/`unknown` verdict from `fm_backend_composer_state` and injects only when it is affirmatively `empty`.
   `pending` means real unsubmitted text, while `unknown` includes an unreadable pane and a bare shell prompt left after the agent exits, so both defer.
   The shared `bin/fm-composer-lib.sh` owns the content decision after each backend captures and structurally identifies its own composer row.
-  It preserves idle bordered composers such as claude's `│ > … │` and bare agent glyphs as empty, but a bare shell glyph is unknown unless inside a genuine bordered composer box; see `docs/herdr-backend.md` "Composer-emptiness safety" for the complete contract.
+  It preserves idle bordered composers such as omp's `│ > … │` and bare agent glyphs as empty, but a bare shell glyph is unknown unless inside a genuine bordered composer box; see `docs/herdr-backend.md` "Composer-emptiness safety" for the complete contract.
   `pane_input_pending` remains the tested predicate for callers that only need to know whether real unsubmitted text is present, but it is insufficient for an injection-safety decision because it cannot distinguish `empty` from `unknown`.
 
 Either condition, or any composer verdict other than `empty`, defers the injection; the buffered escalation survives in `state/.subsuper-escalations` and is retried on the next housekeeping tick.
@@ -169,7 +158,7 @@ the marker lets firstmate distinguish it from a real captain message.
 - The shared composer classifier receives a candidate row only after the active backend performs its own capture and structural row recognition.
   tmux and herdr route their raw styled candidate rows through the shared `fm_composer_strip_ghost` extractor, which removes dim/faint and dark-TRUECOLOR ghost/placeholder text before classification.
   They read the composer shape from a separately ANSI-stripped plain row because a dark TRUECOLOR border can be stripped with ghost content.
-  A ghost-only or idle bordered composer such as claude's `│ > ... │` therefore reads empty without allowing an unbordered shell prompt to do the same.
+  A ghost-only or idle bordered composer such as omp's `│ > ... │` therefore reads empty without allowing an unbordered shell prompt to do the same.
   `FM_COMPOSER_IDLE_RE` still overrides tmux empty-composer matching after shared ghost and border stripping, and `FM_BUSY_REGEX` overrides busy footers.
 - **Max-defer escape** - the daemon must never silently wedge. If anything stays
   buffered past `FM_MAX_DEFER_SECS` (default 300s), the daemon attempts one

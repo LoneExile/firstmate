@@ -130,15 +130,26 @@ SH
   chmod +x "$fakebin/tasks-axi"
 }
 
-# make_fake_ps_claude <fakebin>: harness_pid()/holder_alive() (fm-lock.sh) walk
+# make_fake_ps_omp <fakebin>: harness_pid()/holder_alive() (fm-lock.sh) walk
 # `ps` output looking for a harness command name; this fake reports EVERY
-# queried pid as a live `claude` harness, so the very first ancestry check
+# queried pid as a live `omp` harness, so the very first ancestry check
 # (this test process's own pid) matches and lock acquisition succeeds
-# deterministically. Mirrors fm-grok-harness.test.sh's fake ps.
-make_fake_ps_claude() {
+# deterministically.
+make_fake_ps_omp() {
   local fakebin=$1
-  make_fake_ps_harness "$fakebin" claude
+  cat > "$fakebin/ps" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+  *"comm="*) printf '/usr/local/bin/omp\n'; exit 0 ;;
+  *"args="*) printf 'bun /usr/local/bin/omp\n'; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/ps"
 }
+
+# Legacy alias so callers that use make_fake_ps_claude still get an omp fake.
+make_fake_ps_claude() { make_fake_ps_omp "$@"; }
 
 make_fake_ps_harness() {
   local fakebin=$1 harness=$2
@@ -156,40 +167,6 @@ SH
   printf '%s\n' "$harness" > "$fakebin/.harness-name"
 }
 
-make_fake_ps_pi_holder() {
-  local fakebin=$1 holder_pid=$2
-  cat > "$fakebin/ps" <<SH
-#!/usr/bin/env bash
-set -u
-pid=""
-prev=""
-for arg in "\$@"; do
-  [ "\$prev" = "-p" ] && pid="\$arg"
-  prev="\$arg"
-done
-case "\$*" in
-  *"comm="*)
-    if [ "\$pid" = "$holder_pid" ]; then
-      printf '/usr/local/bin/pi\n'
-    else
-      printf '/bin/zsh\n'
-    fi
-    exit 0
-    ;;
-  *"args="*)
-    if [ "\$pid" = "$holder_pid" ]; then
-      printf 'pi\n'
-    else
-      printf 'zsh\n'
-    fi
-    exit 0
-    ;;
-  *"ppid="*) printf '%s\n' "$holder_pid"; exit 0 ;;
-esac
-exit 1
-SH
-  chmod +x "$fakebin/ps"
-}
 
 # make_fake_tmux <fakebin> <live-target>: display-message succeeds only for
 # the given "session:window" target - the exact primitive
@@ -235,15 +212,11 @@ SH
 }
 
 # run_session_start <home> <root> <path>
-# Drop every harness env marker from bin/fm-harness.sh detect_own so the
-# surrounding interactive shell cannot leak past the suite's fake ps harness.
-# Markers today: CLAUDECODE (claude), PI_CODING_AGENT (pi), GROK_AGENT (grok), OMPCODE (omp; omp also sets CLAUDECODE).
-# codex and opencode have no env markers (ancestry only). Without this, a local
-# claude/pi/grok/omp session fails cases that pin a different fake harness while CI
-# (no ambient markers) still passes.
+# Drop every ambient harness env marker so the surrounding interactive shell
+# cannot leak past the suite's fake ps harness. Markers: OMPCODE, CLAUDECODE.
 run_session_start() {
   local home=$1 root=$2 path=$3
-  env -u CLAUDECODE -u PI_CODING_AGENT -u GROK_AGENT -u OMPCODE \
+  env -u CLAUDECODE -u OMPCODE \
     FM_HOME="$home" FM_ROOT_OVERRIDE="$root" PATH="$path" \
     "$SESSION_START"
 }
@@ -259,34 +232,34 @@ hash_file_for_test() {
   fi
 }
 
-install_pi_turnend_extension_fixture() {
+install_omp_turnend_extension_fixture() {
   local root=$1
-  mkdir -p "$root/.pi/extensions"
-  cp "$ROOT/.pi/extensions/fm-primary-turnend-guard.ts" "$root/.pi/extensions/fm-primary-turnend-guard.ts"
+  mkdir -p "$root/.omp/extensions"
+  cp "$ROOT/.omp/extensions/fm-primary-turnend-guard.ts" "$root/.omp/extensions/fm-primary-turnend-guard.ts"
 }
 
-install_pi_watch_extension_fixture() {
+install_omp_watch_extension_fixture() {
   local root=$1
-  mkdir -p "$root/.pi/extensions"
-  cp "$ROOT/.pi/extensions/fm-primary-pi-watch.ts" "$root/.pi/extensions/fm-primary-pi-watch.ts"
+  mkdir -p "$root/.omp/extensions"
+  cp "$ROOT/.omp/extensions/fm-primary-omp-watch.ts" "$root/.omp/extensions/fm-primary-omp-watch.ts"
 }
 
-write_pi_watch_loaded_marker() {
+write_omp_watch_loaded_marker() {
   local home=$1 root=$2 pid=$3 version
-  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
-  printf '%s\n%s\n' "$version" "$pid" > "$home/state/.pi-watch-extension-loaded"
+  version=$(hash_file_for_test "$root/.omp/extensions/fm-primary-omp-watch.ts")
+  printf '%s\n%s\n' "$version" "$pid" > "$home/state/.omp-watch-extension-loaded"
 }
 
-write_pi_turnend_loaded_marker() {
+write_omp_turnend_loaded_marker() {
   local home=$1 root=$2 pid=$3 version
-  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-turnend-guard.ts")
-  printf '%s\n%s\n' "$version" "$pid" > "$home/state/.pi-turnend-extension-loaded"
+  version=$(hash_file_for_test "$root/.omp/extensions/fm-primary-turnend-guard.ts")
+  printf '%s\n%s\n' "$version" "$pid" > "$home/state/.omp-turnend-extension-loaded"
 }
 
-write_pi_loaded_markers() {
+write_omp_loaded_markers() {
   local home=$1 root=$2 pid=$3
-  write_pi_watch_loaded_marker "$home" "$root" "$pid"
-  write_pi_turnend_loaded_marker "$home" "$root" "$pid"
+  write_omp_watch_loaded_marker "$home" "$root" "$pid"
+  write_omp_turnend_loaded_marker "$home" "$root" "$pid"
 }
 
 # --- context digest: absent vs empty vs present -----------------------------
@@ -742,7 +715,7 @@ EOF
   out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   assert_contains "$out" "FMX: X mode on" "bootstrap did not activate X mode"
-  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: claude" "supervision block missing"
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp" "supervision block missing"
   assert_contains "$out" "- X mode: active" "supervision block did not mention X cadence"
   assert_contains "$out" "Follow the supervision operating instructions block above" "next step did not point back to the emitted supervision block"
 
@@ -770,23 +743,66 @@ EOF
   pass "next step delegates watcher ownership to the AFK daemon"
 }
 
-test_supervision_block_exactly_one_and_pi_diagnostic() {
+# make_fake_ps_omp_holder <fakebin> <holder_pid>: harness_pid() walks the ancestry
+# of fm-lock.sh's process looking for omp. This fake returns omp for holder_pid and
+# a non-omp shell for every other pid, but always returns holder_pid for ppid queries
+# so the ancestry walk traces to holder_pid in exactly two hops.
+make_fake_ps_omp_holder() {
+  local fakebin=$1 holder_pid=$2
+  cat > "$fakebin/ps" <<SH
+#!/usr/bin/env bash
+set -u
+pid=""
+prev=""
+for arg in "\$@"; do
+  [ "\$prev" = "-p" ] && pid="\$arg"
+  prev="\$arg"
+done
+case "\$*" in
+  *"comm="*)
+    if [ "\$pid" = "$holder_pid" ]; then
+      printf '/usr/local/bin/omp\n'
+    else
+      printf '/bin/zsh\n'
+    fi
+    exit 0
+    ;;
+  *"args="*)
+    if [ "\$pid" = "$holder_pid" ]; then
+      printf 'bun /usr/local/bin/omp\n'
+    else
+      printf 'zsh\n'
+    fi
+    exit 0
+    ;;
+  *"ppid="*) printf '%s\n' "$holder_pid"; exit 0 ;;
+esac
+exit 1
+SH
+  chmod +x "$fakebin/ps"
+}
+
+test_supervision_block_exactly_one_and_omp_diagnostic() {
   local rec root home fakebin out block_count wake_line sup_line context_line
-  rec=$(new_world pi-supervision-block)
+  rec=$(new_world omp-supervision-block)
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
   make_fake_toolchain "$fakebin"
-  make_fake_ps_harness "$fakebin" pi
+  make_fake_ps_omp "$fakebin"
+  install_omp_turnend_extension_fixture "$root"
+  install_omp_watch_extension_fixture "$root"
 
-  out=$(FM_FAKE_HARNESS=pi run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
 
   block_count=$(printf '%s\n' "$out" | grep -c '^SUPERVISION OPERATING INSTRUCTIONS - primary harness:')
   [ "$block_count" -eq 1 ] || fail "expected exactly one supervision block, got $block_count"
-  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: pi" "pi supervision block missing"
-  assert_contains "$out" "Mode: Pi extension background wake." "pi snippet missing from session start"
-  assert_contains "$out" "PI_WATCH_EXTENSION: not loaded" "pi extension load diagnostic missing"
-  assert_contains "$out" "restart plain pi so $root/.pi/extensions/fm-primary-turnend-guard.ts and $root/.pi/extensions/fm-primary-pi-watch.ts auto-load" "pi extension load diagnostic omits the turn-end guard extension"
+  assert_contains "$out" "SUPERVISION OPERATING INSTRUCTIONS - primary harness: omp" "omp supervision block missing"
+  assert_contains "$out" "OMP_WATCH_EXTENSION: not loaded" "omp extension load diagnostic missing (no markers written)"
+  assert_contains "$out" "$root/.omp/extensions/fm-primary-turnend-guard.ts" \
+    "omp extension diagnostic omits the turn-end guard extension path"
+  assert_contains "$out" "$root/.omp/extensions/fm-primary-omp-watch.ts" \
+    "omp extension diagnostic omits the watcher extension path"
 
   wake_line=$(printf '%s\n' "$out" | grep -n '^WAKE QUEUE$' | head -1 | cut -d: -f1)
   sup_line=$(printf '%s\n' "$out" | grep -n '^SUPERVISION OPERATING INSTRUCTIONS' | head -1 | cut -d: -f1)
@@ -794,12 +810,12 @@ EOF
   [ "$wake_line" -lt "$sup_line" ] || fail "supervision block did not follow wake queue"
   [ "$sup_line" -lt "$context_line" ] || fail "supervision block did not precede context"
 
-  pass "session start emits exactly one detected harness block and reports Pi extension load state"
+  pass "session start emits exactly one omp supervision block and reports OMP extension load state"
 }
 
-test_pi_diagnostic_rejects_stale_loaded_marker() {
+test_omp_diagnostic_rejects_stale_loaded_marker() {
   local rec root home fakebin out marker holder_pid
-  rec=$(new_world pi-stale-loaded-marker)
+  rec=$(new_world omp-stale-loaded-marker)
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
@@ -807,26 +823,26 @@ EOF
 
   sleep 300 &
   holder_pid=$!
-  make_fake_ps_pi_holder "$fakebin" "$holder_pid"
-  install_pi_turnend_extension_fixture "$root"
-  install_pi_watch_extension_fixture "$root"
-  marker="$home/state/.pi-watch-extension-loaded"
+  make_fake_ps_omp_holder "$fakebin" "$holder_pid"
+  install_omp_turnend_extension_fixture "$root"
+  install_omp_watch_extension_fixture "$root"
+  marker="$home/state/.omp-watch-extension-loaded"
   printf 'stale-extension-version\n%s\n' "$holder_pid" > "$marker"
-  write_pi_turnend_loaded_marker "$home" "$root" "$holder_pid"
+  write_omp_turnend_loaded_marker "$home" "$root" "$holder_pid"
   touch -t 203001010000 "$marker" 2>/dev/null || touch "$marker"
 
-  out=$(FM_FAKE_HARNESS=pi run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
 
-  assert_contains "$out" "PI_WATCH_EXTENSION: not loaded" "pi diagnostic trusted a stale loaded marker"
+  assert_contains "$out" "OMP_WATCH_EXTENSION: not loaded" "omp diagnostic trusted a stale loaded marker"
 
-  pass "session start rejects stale Pi loaded markers"
+  pass "session start rejects stale OMP loaded markers"
 }
 
-test_pi_diagnostic_accepts_prelock_loaded_marker() {
+test_omp_diagnostic_accepts_current_loaded_marker() {
   local rec root home fakebin out holder_pid
-  rec=$(new_world pi-prelock-loaded-marker)
+  rec=$(new_world omp-current-loaded-marker)
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
@@ -834,24 +850,24 @@ EOF
 
   sleep 300 &
   holder_pid=$!
-  make_fake_ps_pi_holder "$fakebin" "$holder_pid"
-  install_pi_turnend_extension_fixture "$root"
-  install_pi_watch_extension_fixture "$root"
+  make_fake_ps_omp_holder "$fakebin" "$holder_pid"
+  install_omp_turnend_extension_fixture "$root"
+  install_omp_watch_extension_fixture "$root"
 
-  write_pi_loaded_markers "$home" "$root" "$holder_pid"
+  write_omp_loaded_markers "$home" "$root" "$holder_pid"
 
-  out=$(FM_FAKE_HARNESS=pi run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
 
-  assert_not_contains "$out" "PI_WATCH_EXTENSION: not loaded" "pi diagnostic rejected a current pre-lock loaded marker"
+  assert_not_contains "$out" "OMP_WATCH_EXTENSION: not loaded" "omp diagnostic rejected a current pre-lock loaded marker"
 
-  pass "session start accepts current Pi markers written before lock acquisition"
+  pass "session start accepts current OMP markers written before lock acquisition"
 }
 
-test_pi_diagnostic_rejects_missing_turnend_guard_marker() {
+test_omp_diagnostic_rejects_missing_turnend_guard_marker() {
   local rec root home fakebin out holder_pid
-  rec=$(new_world pi-missing-turnend-marker)
+  rec=$(new_world omp-missing-turnend-marker)
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
@@ -859,24 +875,25 @@ EOF
 
   sleep 300 &
   holder_pid=$!
-  make_fake_ps_pi_holder "$fakebin" "$holder_pid"
-  install_pi_turnend_extension_fixture "$root"
-  install_pi_watch_extension_fixture "$root"
+  make_fake_ps_omp_holder "$fakebin" "$holder_pid"
+  install_omp_turnend_extension_fixture "$root"
+  install_omp_watch_extension_fixture "$root"
 
-  write_pi_watch_loaded_marker "$home" "$root" "$holder_pid"
+  write_omp_watch_loaded_marker "$home" "$root" "$holder_pid"
+  # no turnend marker written
 
-  out=$(FM_FAKE_HARNESS=pi run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
 
-  assert_contains "$out" "PI_WATCH_EXTENSION: not loaded" "pi diagnostic trusted a session without the turn-end guard extension"
+  assert_contains "$out" "OMP_WATCH_EXTENSION: not loaded" "omp diagnostic trusted a session without the turn-end guard extension"
 
-  pass "session start rejects Pi sessions missing the turn-end guard marker"
+  pass "session start rejects OMP sessions missing the turn-end guard marker"
 }
 
-test_pi_diagnostic_rejects_previous_session_loaded_marker() {
+test_omp_diagnostic_rejects_previous_session_loaded_marker() {
   local rec root home fakebin out marker version holder_pid
-  rec=$(new_world pi-previous-session-loaded-marker)
+  rec=$(new_world omp-previous-session-loaded-marker)
   IFS='|' read -r root home fakebin <<EOF
 $rec
 EOF
@@ -884,21 +901,21 @@ EOF
 
   sleep 300 &
   holder_pid=$!
-  make_fake_ps_pi_holder "$fakebin" "$holder_pid"
-  install_pi_turnend_extension_fixture "$root"
-  install_pi_watch_extension_fixture "$root"
-  marker="$home/state/.pi-watch-extension-loaded"
-  version=$(hash_file_for_test "$root/.pi/extensions/fm-primary-pi-watch.ts")
+  make_fake_ps_omp_holder "$fakebin" "$holder_pid"
+  install_omp_turnend_extension_fixture "$root"
+  install_omp_watch_extension_fixture "$root"
+  marker="$home/state/.omp-watch-extension-loaded"
+  version=$(hash_file_for_test "$root/.omp/extensions/fm-primary-omp-watch.ts")
   printf '%s\n999999\n' "$version" > "$marker"
-  write_pi_turnend_loaded_marker "$home" "$root" "$holder_pid"
+  write_omp_turnend_loaded_marker "$home" "$root" "$holder_pid"
 
-  out=$(FM_FAKE_HARNESS=pi run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
   kill "$holder_pid" 2>/dev/null || true
   wait "$holder_pid" 2>/dev/null || true
 
-  assert_contains "$out" "PI_WATCH_EXTENSION: not loaded" "pi diagnostic trusted a marker from a previous Pi process"
+  assert_contains "$out" "OMP_WATCH_EXTENSION: not loaded" "omp diagnostic trusted a marker from a previous OMP process"
 
-  pass "session start rejects Pi loaded markers from previous sessions"
+  pass "session start rejects OMP loaded markers from previous sessions"
 }
 
 test_context_digest_absent_empty_present
@@ -916,8 +933,8 @@ test_backlog_compact_tasks_axi_unavailable_uses_manual_fallback
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
-test_supervision_block_exactly_one_and_pi_diagnostic
-test_pi_diagnostic_rejects_stale_loaded_marker
-test_pi_diagnostic_accepts_prelock_loaded_marker
-test_pi_diagnostic_rejects_missing_turnend_guard_marker
-test_pi_diagnostic_rejects_previous_session_loaded_marker
+test_supervision_block_exactly_one_and_omp_diagnostic
+test_omp_diagnostic_rejects_stale_loaded_marker
+test_omp_diagnostic_accepts_current_loaded_marker
+test_omp_diagnostic_rejects_missing_turnend_guard_marker
+test_omp_diagnostic_rejects_previous_session_loaded_marker

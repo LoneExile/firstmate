@@ -63,8 +63,9 @@ make_fake_root() {
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
-  # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
+  # fm-pr-lib.sh + fm-pr-host-lib.sh: teardown sources both for task-ID validation and PR host ops.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  ln -s "$ROOT/bin/fm-pr-host-lib.sh" "$fake/bin/fm-pr-host-lib.sh"
   # fm-guard.sh: stub (teardown calls it with `|| true`).
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -87,7 +88,7 @@ SH
 window=fakeses:fm-$id
 worktree=$TMP_ROOT/nonexistent-worktree-$id
 project=$TMP_ROOT/nonexistent-project-$id
-harness=claude
+harness=omp
 kind=ship
 mode=no-mistakes
 yolo=off
@@ -163,8 +164,9 @@ test_teardown_skips_gracefully_without_tasktmp() {
   ln -s "$ROOT/bin/fm-lock-lib.sh" "$fake/bin/fm-lock-lib.sh"
   # fm-gate-refuse-lib.sh: teardown sources it before any fleet mutation.
   ln -s "$ROOT/bin/fm-gate-refuse-lib.sh" "$fake/bin/fm-gate-refuse-lib.sh"
-  # fm-pr-lib.sh: teardown uses its canonical task-ID validator for poll cleanup.
+  # fm-pr-lib.sh + fm-pr-host-lib.sh: teardown sources both.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
+  ln -s "$ROOT/bin/fm-pr-host-lib.sh" "$fake/bin/fm-pr-host-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -183,7 +185,7 @@ SH
 window=fakeses:fm-$id
 worktree=$TMP_ROOT/nonexistent-wt-$id
 project=$TMP_ROOT/nonexistent-proj-$id
-harness=claude
+harness=omp
 kind=ship
 mode=no-mistakes
 yolo=off

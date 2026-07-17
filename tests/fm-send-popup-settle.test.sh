@@ -1,20 +1,15 @@
 #!/usr/bin/env bash
-# fm-send pre-submit popup-settle selection (the codex `$<skill>` fix).
+# fm-send pre-submit popup-settle selection.
 #
 # Some TUIs open a completion popup when the composer's first character triggers
-# it: codex (and others) for a leading `/` slash command, and codex specifically
-# for a leading `$<skill>` invocation (e.g. `$no-mistakes`). Submitting before the
-# popup settles lets it swallow the Enter, so the line never submits. fm-send
-# absorbs this by pausing `settle` seconds AFTER typing and BEFORE the (retried)
-# Enter - the first sleep fm_tmux_submit_core makes. These tests pin the
-# settle-SELECTION matrix hermetically (stubbed tmux + sleep, no real agent):
+# it (e.g. for a leading `/` slash command). Submitting before the popup settles
+# lets it swallow the Enter, so the line never submits. fm-send absorbs this by
+# pausing `settle` seconds AFTER typing and BEFORE the (retried) Enter - the first
+# sleep fm_tmux_submit_core makes. These tests pin the settle-SELECTION matrix
+# hermetically (stubbed tmux + sleep, no real agent):
 #
-#   /...            -> 1.2  (universal; `/` only starts a command, never plain text)
-#   $... to codex   -> 1.2  (scoped: codex opens a `$<skill>` popup)
-#   $... to claude  -> 0.3  (NOT codex: `$` commonly starts plain text "$5", "$HOME")
-#   $... explicit   -> 0.3  (session:window target has no meta -> harness unknown
-#                            -> non-codex safe default)
-#   plain text      -> 0.3  (fast path)
+#   /...        -> 1.2  (universal; `/` only starts a command, never plain text)
+#   other text  -> 0.3  (fast path)
 #
 # The popup-settle is the FIRST sleep recorded: fm_tmux_submit_core types the text,
 # then `sleep "$settle"`, then the Enter-retry loop (sleep 0.4 each) and finally
@@ -24,10 +19,8 @@
 # real safety net; this settle is only the optimization that lets the popup clear so
 # the first Enter lands.
 #
-# Every case below passes a LITERAL `$<skill>` / `$price` message in single quotes
-# on purpose - the whole point is to send an unexpanded `$...` line to the agent -
-# so SC2016 (which flags single-quoted `$` as a probably-forgotten expansion) is a
-# false positive here and is disabled file-wide.
+# Every case below passes a LITERAL `$<skill>` message in single quotes on purpose
+# so SC2016 is a false positive and is disabled file-wide.
 # shellcheck disable=SC2016
 set -u
 
@@ -109,30 +102,20 @@ first_settle() {  # <expected> <label> <harness|--explicit> <message> [selector-
   pass "fm-send popup-settle: $label -> ${expected}s"
 }
 
-# Codex `$<skill>` gets the long settle so its `$` popup clears (the fix).
-first_settle 1.2 'codex $skill -> long settle' codex '$no-mistakes'
+# The `/` slash case gives the long settle so its completion popup clears.
+first_settle 1.2 'omp /command -> long settle' omp '/no-mistakes'
 
-# The same Codex `$<skill>` path must work when the target is addressed by exact
-# task id, not only by the legacy `fm-<id>` window label.
-first_settle 1.2 'codex $skill exact task id -> long settle' codex '$no-mistakes' exact
+# The same slash path when addressed by exact task id.
+first_settle 1.2 'omp /command exact task id -> long settle' omp '/no-mistakes' exact
 
-# Same `$` message to claude keeps the fast path: `$` is ordinary text there.
-first_settle 0.3 'claude $-message -> fast path' claude '$no-mistakes'
+# An explicit session:window target with no meta still gets the slash settle.
+first_settle 1.2 'explicit target /command -> long settle' --explicit '/no-mistakes'
 
-# `$`-prefixed plain text to claude (a price) must NOT popup-settle - the regression
-# the codex scoping exists to prevent.
-first_settle 0.3 'claude "$5/month" -> fast path' claude '$5/month is cheap'
+# A `$`-prefixed message takes the fast path (no harness-specific popup scoping).
+first_settle 0.3 'omp $message -> fast path' omp '$no-mistakes'
 
-# An explicit session:window target has no meta, so the harness is unknown and
-# treated as non-codex: the safe default keeps the fast path even for a `$` message.
-first_settle 0.3 'explicit target $message -> fast path (unknown harness)' --explicit '$no-mistakes'
+# An explicit session:window target has no meta - still fast path for `$`.
+first_settle 0.3 'explicit target $message -> fast path' --explicit '$no-mistakes'
 
-# The `/` slash case stays universal and unchanged: long settle regardless of
-# harness (here a non-codex claude target).
-first_settle 1.2 'claude /command -> long settle (slash unchanged)' claude '/no-mistakes'
-
-# A `/` to codex is likewise still the long settle (slash path untouched).
-first_settle 1.2 'codex /command -> long settle (slash unchanged)' codex '/help'
-
-# Plain text to codex takes the fast path - the codex scope is `$`-prefixed only.
-first_settle 0.3 'codex plain text -> fast path' codex 'just a normal steer'
+# Plain text takes the fast path.
+first_settle 0.3 'omp plain text -> fast path' omp 'just a normal steer'

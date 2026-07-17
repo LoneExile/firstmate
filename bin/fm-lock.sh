@@ -14,8 +14,9 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 LOCK="$STATE/.lock"
 mkdir -p "$STATE"
 
-# Known harness command names; extend when a new adapter is verified.
-HARNESS_RE='claude|codex|opencode|grok|(^|/| )omp( |$)|^pi$'
+# firstmate runs only on omp (Oh My Pi). A live omp runs as `bun`/`node` with the
+# harness at `.../omp` (or a bare `omp` command), so match that word-boundedly.
+HARNESS_RE='(^|/| )omp( |$)'
 
 harness_pid() {
   local pid=$$ comm args
@@ -25,9 +26,9 @@ harness_pid() {
     if printf '%s' "${comm##*/}" | grep -qE "$HARNESS_RE"; then
       echo "$pid"; return 0
     fi
-    # Bare interpreter (node/python/bun): match the harness name in its script path/args.
+    # Bare interpreter (node/bun): match the harness name in its script path/args.
     case "$comm" in
-      *node*|*python*|*bun*) printf '%s' "$args" | grep -qE "$HARNESS_RE" && { echo "$pid"; return 0; } ;;
+      *node*|*bun*) printf '%s' "$args" | grep -qE "$HARNESS_RE" && { echo "$pid"; return 0; } ;;
     esac
     pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
     [ -n "$pid" ] && [ "$pid" -gt 1 ] || return 1

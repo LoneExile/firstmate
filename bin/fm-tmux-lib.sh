@@ -7,15 +7,15 @@
 # logic cannot drift between the two.
 #
 # Why this exists (incident afk-invx-i5): the daemon's old composer check only
-# recognized a BARE prompt glyph ("> ") as an empty composer. claude draws its
-# input box with box-drawing borders ("│ > … │"), so every idle claude pane read
-# as "pending input" and the away-mode daemon deferred 100% of escalations for
+# recognized a BARE prompt glyph ("> ") as an empty composer. An agent draws its
+# input box with box-drawing borders ("│ > … │"), so every idle pane read as
+# "pending input" and the away-mode daemon deferred 100% of escalations for
 # 9.5 hours with no escape. The detector below strips the box borders before
 # deciding, so a bordered-but-empty composer is correctly seen as empty. The same
 # corrected detector backs the submit acknowledgement (a submit "landed" iff the
 # composer is empty afterward), fixing the parallel false "Enter swallowed".
 #
-# Ghost text (incident composer-robust): claude renders a predicted-next-prompt
+# Ghost text (incident composer-robust): omp may render a predicted-next-prompt
 # "suggestion" as dim/faint text inside an otherwise-empty composer. A plain
 # capture cannot tell it apart from text a human typed, so the old reader saw an
 # idle pane as holding pending input and the daemon deferred injection / firstmate
@@ -46,21 +46,19 @@
 # shellcheck source=bin/fm-composer-lib.sh
 . "$(dirname -- "${BASH_SOURCE[0]}")/fm-composer-lib.sh"
 
-# Busy footers per harness (mirror fm-watch.sh). claude/codex: "esc to
-# interrupt"; opencode: "esc interrupt"; pi: "Working..."; grok: "Ctrl+c:cancel"
-# (grok's mid-turn cancel hint, shown iff a turn is running - verified grok 0.2.73).
-# omp (Oh My Pi, a Pi fork): "Working..."/"Working…" loader, and claude-style "esc
-# to interrupt" (sets CLAUDECODE=1). Exact footer pending live verify; override via
-# FM_BUSY_REGEX / FM_COMPOSER_IDLE_RE once captured on a live omp pane.
-FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)|Ctrl\+c:cancel'
+# Busy footer for omp (mirror fm-watch.sh). omp (Oh My Pi) shows a
+# "Working..."/"Working…" loader and, being claude-compatible (sets CLAUDECODE=1),
+# may also render "esc to interrupt". Override via FM_BUSY_REGEX /
+# FM_COMPOSER_IDLE_RE once confirmed on a live omp pane.
+FM_TMUX_BUSY_REGEX_DEFAULT='esc (to )?interrupt|Working(\.\.\.|…)'
 
 # fm_tmux_strip_ghost: thin adapter over the shared, fleet-wide ghost extractor
 # fm_composer_strip_ghost (bin/fm-composer-lib.sh). It drops de-emphasised
-# ghost/placeholder runs - dim/faint (SGR 2, claude's/codex's ghost) AND a
-# dark/muted truecolor foreground (grok's placeholder) - from one captured,
-# styled composer line and prints the plain, real-typed text. Kept as a named
-# tmux entry point (and for existing callers/tests) but owns no logic of its own,
-# so the tmux and herdr adapters cannot drift apart on what counts as ghost text.
+# ghost/placeholder runs - dim/faint (SGR 2) and dark/muted truecolor foreground -
+# from one captured, styled composer line and prints the plain, real-typed text.
+# Kept as a named tmux entry point (and for existing callers/tests) but owns no
+# logic of its own, so the tmux and herdr adapters cannot drift apart on what
+# counts as ghost text.
 fm_tmux_strip_ghost() { fm_composer_strip_ghost; }
 
 # fm_tmux_composer_state: classify the cursor/composer line of <target> as
@@ -78,16 +76,16 @@ fm_tmux_strip_ghost() { fm_composer_strip_ghost; }
 # read from the PLAIN row (fm_composer_strip_ansi keeps ghost text so the box
 # border is still visible), while the real-typed CONTENT is extracted with the
 # shared fm_composer_strip_ghost so dim/faint AND dark-truecolor ghost text drops
-# out before classification (grok's dark box border drops with the ghost, which
-# is why the bordered flag is read from the plain row, not the ghost-stripped
-# one). Both are internal only, never surfaced. The detector strips the harness's
-# box-drawing composer borders ("│ … │", heavy "┃", or a plain ASCII "|") using
-# literal-string substitution (bash 3.2 safe, locale-independent - no \u escapes,
-# no multibyte character classes), and delegates the empty/pending/unknown
-# decision to the shared owner fm_composer_classify_content
-# (bin/fm-composer-lib.sh). The bordered flag is what lets a bordered `│ > │`
-# (claude's own idle composer) read empty while a bare, unbordered `$ ` dead-shell
-# prompt reads unknown.
+# out before classification; the dark border of a dark-themed bordered composer
+# also drops with the ghost, which is why the bordered flag is read from the plain
+# row, not the ghost-stripped one. Both are internal only, never surfaced. The
+# detector strips the harness's box-drawing composer borders ("│ … │", heavy
+# "┃", or a plain ASCII "|") using literal-string substitution (bash 3.2 safe,
+# locale-independent - no \u escapes, no multibyte character classes), and
+# delegates the empty/pending/unknown decision to the shared owner
+# fm_composer_classify_content (bin/fm-composer-lib.sh). The bordered flag is
+# what lets a bordered `│ > │` idle composer read empty while a bare, unbordered
+# `$ ` dead-shell prompt reads unknown.
 fm_tmux_composer_state() {  # <target> -> empty|pending|unknown
   local target=$1 cy raw plain stripped bordered=0
   cy=$(tmux display-message -p -t "$target" '#{cursor_y}' 2>/dev/null) || { printf 'unknown'; return 0; }

@@ -184,7 +184,7 @@ This is why `fm_backend_zellij_kill` resolves the owning tab id from the pane wh
 ## Composer verification: delta-based
 
 Zellij's CLI exposes no cursor-row/ANSI-only capture primitive (like tmux's), so `fm_backend_zellij_send_text_submit` still uses a content-diff strategy: capture the pane right after typing (the unsubmitted "typed" baseline), then after each Enter attempt capture again - unchanged means retry, changed means submitted.
-This is now zellij-specific; the herdr adapter moved away from content-diff after the 2026-07-03 grok slash-submit incident and now confirms normal idle-baseline submits through native agent-state, retaining structural composer-state for the affirmative-empty injection guard and submit fallback.
+This is now zellij-specific; the herdr adapter moved away from content-diff after the 2026-07-03 slash-submit incident and now confirms normal idle-baseline submits through native agent-state, retaining structural composer-state for the affirmative-empty injection guard and submit fallback.
 All implemented submit-verifying backends expose the identical caller-facing verdict vocabulary (`empty`, `pending`, `unknown`, `send-failed`), so `fm-send.sh` needs no backend-specific branching.
 
 ## Session safety
@@ -196,13 +196,13 @@ Every real-zellij test in this document and its accompanying test files uses a u
 
 ## End-to-end verification (spawn -> steer -> peek -> done -> merge -> teardown)
 
-Beyond the fake-CLI unit tests (`tests/fm-backend-zellij.test.sh`) and the real-CLI smoke tests (`tests/fm-backend-zellij-smoke.test.sh`), the full firstmate lifecycle was driven end to end against a real `claude` crewmate through this branch's own scripts, in a scratch `FM_HOME`, a scratch `local-only` git project, and an isolated `FM_ZELLIJ_SESSION` (never the real `firstmate` session name):
+Beyond the fake-CLI unit tests (`tests/fm-backend-zellij.test.sh`) and the real-CLI smoke tests (`tests/fm-backend-zellij-smoke.test.sh`), the full firstmate lifecycle was driven end to end against a real `omp` crewmate through this branch's own scripts, in a scratch `FM_HOME`, a scratch `local-only` git project, and an isolated `FM_ZELLIJ_SESSION` (never the real `firstmate` session name):
 
-1. `FM_HOME=<scratch> FM_BACKEND=zellij FM_ZELLIJ_SESSION=<isolated> bin/fm-spawn.sh zellij-e2e-t1 projects/scratch-e2e-project claude` - spawned successfully, printing `window=<session>:<pane>` in the summary and writing `backend=zellij`, `zellij_session=`, `zellij_tab_id=`, `zellij_pane_id=` to the task's meta. The worktree-discovery poll correctly resolved the real treehouse worktree path using the active `pwd`-probe workaround.
-2. `FM_HOME=<scratch> FM_ZELLIJ_SESSION=<isolated> bin/fm-peek.sh fm-zellij-e2e-t1` - showed the live claude trust dialog ("Quick safety check: Is this a project you created or one you trust?").
+1. `FM_HOME=<scratch> FM_BACKEND=zellij FM_ZELLIJ_SESSION=<isolated> bin/fm-spawn.sh zellij-e2e-t1 projects/scratch-e2e-project omp` - spawned successfully, printing `window=<session>:<pane>` in the summary and writing `backend=zellij`, `zellij_session=`, `zellij_tab_id=`, `zellij_pane_id=` to the task's meta. The worktree-discovery poll correctly resolved the real treehouse worktree path using the active `pwd`-probe workaround.
+2. `FM_HOME=<scratch> FM_ZELLIJ_SESSION=<isolated> bin/fm-peek.sh fm-zellij-e2e-t1` - showed the live omp trust dialog ("Quick safety check: Is this a project you created or one you trust?").
 3. `FM_HOME=<scratch> FM_ZELLIJ_SESSION=<isolated> bin/fm-send.sh fm-zellij-e2e-t1 --key Enter` - accepted the trust dialog.
-4. `FM_HOME=<scratch> FM_ZELLIJ_SESSION=<isolated> bin/fm-peek.sh fm-zellij-e2e-t1` again - showed claude actively working through the brief (verifying isolation, then implementing).
-5. `FM_HOME=<scratch> FM_ZELLIJ_SESSION=<isolated> bin/fm-send.sh fm-zellij-e2e-t1 "captain says: proceed as planned, this is a trivial verification task"` - a plain-text steer while claude was mid-turn, exercising the delta-based send-and-verify path; the send completed without a `pending`/`send-failed` error.
+4. `FM_HOME=<scratch> FM_ZELLIJ_SESSION=<isolated> bin/fm-peek.sh fm-zellij-e2e-t1` again - showed omp actively working through the brief (verifying isolation, then implementing).
+5. `FM_HOME=<scratch> FM_ZELLIJ_SESSION=<isolated> bin/fm-send.sh fm-zellij-e2e-t1 "captain says: proceed as planned, this is a trivial verification task"` - a plain-text steer while the agent was mid-turn, exercising the delta-based send-and-verify path; the send completed without a `pending`/`send-failed` error.
 6. The crewmate appended `done: ready in branch fm/zellij-e2e-t1` to its status file, and its commit (`add hello.txt`, message `add hello.txt`) was confirmed present on branch `fm/zellij-e2e-t1` in the project's git history, with `hello.txt` containing exactly the expected line.
 7. `bin/fm-teardown.sh zellij-e2e-t1` **REFUSED**, exactly as required: `REFUSED: local-only worktree ... has work not yet merged into main and not on any remote.`
 8. `bin/fm-merge-local.sh zellij-e2e-t1` - fast-forwarded local `main` to the crewmate's commit (`02c9dd2 -> ba41f90`).

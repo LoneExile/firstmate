@@ -1,88 +1,24 @@
 #!/usr/bin/env bash
-# Detect the agent harness this process tree runs on.
-# Usage: fm-harness.sh                  print own harness: claude|codex|opencode|pi|grok|omp|unknown
-#        fm-harness.sh crew             print the effective CREWMATE harness
-#                                        (config/crew-harness; "default" resolves to own)
-#        fm-harness.sh secondmate       print the harness the PRIMARY uses to launch
-#                                        SECONDMATE agents: config/secondmate-harness ->
-#                                        config/crew-harness -> own. "default" or absent
-#                                        defers to the crew resolution, so an unset
-#                                        secondmate-harness behaves exactly as the crew
-#                                        harness did before this knob existed.
-#        fm-harness.sh secondmate-model    print the optional MODEL token from
-#                                        config/secondmate-harness, or empty when absent.
-#        fm-harness.sh secondmate-effort   print the optional EFFORT token from
-#                                        config/secondmate-harness, or empty when absent.
+# firstmate runs exclusively on the omp (Oh My Pi) harness, so harness resolution
+# is constant. This shim stays as the single source callers ask, and still parses
+# the optional secondmate model/effort tokens (which parametrize the omp
+# secondmate and are orthogonal to the - now fixed - harness choice).
+# Usage: fm-harness.sh                  print own harness        (always: omp)
+#        fm-harness.sh crew             print crewmate harness   (always: omp)
+#        fm-harness.sh secondmate       print secondmate harness (always: omp)
+#        fm-harness.sh secondmate-model    optional MODEL token from config/secondmate-harness
+#        fm-harness.sh secondmate-effort   optional EFFORT token from config/secondmate-harness
 # config/secondmate-harness format: a single line "<harness> [<model>] [<effort>]",
-# whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
-# harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
-# Model/effort come ONLY from this file - config/crew-harness stays a bare adapter
-# name and is never parsed for a model.
-# Detection layers: verified environment markers first, then process ancestry.
-# Record each newly verified env marker here.
+# whitespace-separated. The harness token is vestigial (omp is the only adapter),
+# but the optional model/effort tokens still parametrize the omp secondmate. Write
+# it as "omp <model> <effort>" to set them; only the first non-empty, non-comment
+# line is parsed.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FM_ROOT="${FM_ROOT_OVERRIDE:-$(cd "$SCRIPT_DIR/.." && pwd)}"
 FM_HOME="${FM_HOME:-${FM_ROOT_OVERRIDE:-$FM_ROOT}}"
 CONFIG="${FM_CONFIG_OVERRIDE:-$FM_HOME/config}"
-
-detect_own() {
-  # Layer 1: environment markers for verified harnesses.
-  # OMP (Oh My Pi) sets BOTH OMPCODE=1 and CLAUDECODE=1 in its child/tool env
-  # (verified in the omp binary env builder, omp v16.3.15). OMPCODE is unique to
-  # OMP - Claude Code sets CLAUDECODE but never OMPCODE - so it MUST be checked
-  # before the CLAUDECODE marker below, or OMP misdetects as claude.
-  [ "${OMPCODE:-}" = "1" ] && { echo omp; return; }
-  [ "${CLAUDECODE:-}" = "1" ] && { echo claude; return; }
-  [ "${PI_CODING_AGENT:-}" = "true" ] && { echo pi; return; }
-  # grok sets GROK_AGENT=1 for its child/tool processes (verified, grok 0.2.73).
-  # It does NOT set CLAUDECODE despite being Claude-Code-compatible, so this marker
-  # is unambiguous when firstmate runs natively on grok.
-  [ "${GROK_AGENT:-}" = "1" ] && { echo grok; return; }
-  # Layer 2: walk the parent chain and match the command name.
-  local pid=$$ comm args
-  for _ in 1 2 3 4 5 6 7 8; do
-    comm=$(ps -o comm= -p "$pid" 2>/dev/null) || break
-    case "${comm##*/}" in
-      *claude*) echo claude; return ;;
-      *codex*) echo codex; return ;;
-      *opencode*) echo opencode; return ;;
-      *grok*) echo grok; return ;;
-      pi) echo pi; return ;;
-      omp) echo omp; return ;;
-      node*|python*|bun*)
-        # Bare interpreter: match the harness name as a path-final component or a
-        # space-delimited word in its args, mirroring fm-lock.sh's (^|/| )name( |$)
-        # word-boundary semantics. A live omp/pi runs as `bun`/`node` with the
-        # harness at `.../omp` or `.../pi` (verified 2026-07-17: a live omp tmux
-        # pane reports pane_current_command=bun with args `bun /…/omp …`), so the
-        # match must also accept a trailing-flag form like `.../omp --auto-approve`.
-        args=$(ps -o args= -p "$pid" 2>/dev/null)
-        case "$args" in
-          *claude*) echo claude; return ;;
-          *codex*) echo codex; return ;;
-          *opencode*) echo opencode; return ;;
-          *grok*) echo grok; return ;;
-          */pi|*"/pi "*|*" pi"|*" pi "*) echo pi; return ;;
-          */omp|*"/omp "*|*" omp"|*" omp "*) echo omp; return ;;
-        esac ;;
-    esac
-    pid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
-    if [ -z "$pid" ] || [ "$pid" -le 1 ]; then
-      break
-    fi
-  done
-  echo unknown
-}
-
-# Resolve the effective crewmate harness: config/crew-harness (a bare adapter
-# name) wins; absent or "default" mirrors firstmate's own harness.
-resolve_crew() {
-  local crew=
-  [ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
-  if [ -z "$crew" ] || [ "$crew" = "default" ]; then detect_own; else echo "$crew"; fi
-}
 
 # Print the first non-empty, non-comment line of config/secondmate-harness
 # (leading/trailing whitespace trimmed), or nothing when the file is absent or
@@ -117,18 +53,6 @@ secondmate_field() {
   esac
 }
 
-# Resolve the harness the PRIMARY uses to launch SECONDMATE agents: a fallback
-# chain config/secondmate-harness -> config/crew-harness -> own. An absent or
-# "default" secondmate-harness token defers to the crew resolution, so an unset
-# secondmate-harness behaves exactly as before this knob existed (a secondmate
-# launched on the crew harness). config/secondmate-harness is the PRIMARY's own
-# setting and is never inherited downstream - secondmates do not spawn secondmates.
-resolve_secondmate() {
-  local sm
-  sm=$(secondmate_field 1)
-  if [ -z "$sm" ] || [ "$sm" = "default" ]; then resolve_crew; else echo "$sm"; fi
-}
-
 # Print the optional model token (2nd field) from config/secondmate-harness, or
 # empty when the harness token is absent/"default" (harness-only file, same as
 # today) or when no model token is present.
@@ -149,9 +73,7 @@ resolve_secondmate_effort() {
 }
 
 case "${1:-}" in
-  crew) resolve_crew ;;
-  secondmate) resolve_secondmate ;;
   secondmate-model) resolve_secondmate_model ;;
   secondmate-effort) resolve_secondmate_effort ;;
-  *) detect_own ;;
+  *) echo omp ;;
 esac

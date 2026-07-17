@@ -142,14 +142,15 @@ fm_backend_tmux_current_command() {  # <target>
 # idle shell passes THAT check as "alive" - the secondmate-liveness gap
 # AGENTS.md's session-start guarantee closes). See docs/tmux-backend.md
 # "Agent liveness probe" for the empirical basis. Prints one of:
-#   alive   - the foreground command is one of the verified harness binaries
-#             (claude, codex, opencode, grok - each confirmed to run as its
-#             own process name, never wrapped by a generic interpreter).
+#   alive   - a foreground command positively attributable to a running agent.
+#             firstmate's only harness, omp, runs under a generic "bun"
+#             interpreter that cannot be attributed from outside the pane
+#             (docs/tmux-backend.md "Known gaps"), so in practice this probe
+#             returns "dead" for a bare shell and "unknown" otherwise.
 #   dead    - the foreground command is a bare shell: nothing is running in
 #             the pane, so a prior agent process has exited.
-#   unknown - anything else, INCLUDING a bare "node"/"python"/"bun" interpreter
-#             name (pi's launcher execs into a generic "node" process and
-#             omp's runs under "bun", with no reliable way to attribute either
+#   unknown - anything else, INCLUDING a bare "node"/"bun" interpreter name (a
+#             live omp runs under "bun", with no reliable way to attribute it
 #             back from outside the pane - docs/tmux-backend.md "Known gaps"),
 #             or an unreadable pane. Callers must never treat unknown as a confirmed-dead
 #             signal (bin/fm-bootstrap.sh's secondmate-liveness sweep gates a
@@ -160,7 +161,6 @@ fm_backend_tmux_agent_alive() {  # <target>
   comm=${comm#-}
   case "$comm" in
     '') printf 'unknown' ;;
-    *claude*|*codex*|*opencode*|*grok*) printf 'alive' ;;
     zsh|bash|sh|dash|ash|ksh|mksh|tcsh|csh|fish) printf 'dead' ;;
     *) printf 'unknown' ;;
   esac

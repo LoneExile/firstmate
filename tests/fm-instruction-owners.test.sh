@@ -104,7 +104,7 @@ test_generic_effort_fallback_respects_precedence() {
   ' "$HARNESS")
   assert_contains "$section" "explicit per-task captain instruction first" \
     "effort rubric lost per-task captain precedence"
-  assert_contains "$section" "standing dispatch profile or secondmate pin" \
+  assert_contains "$section" "standing secondmate pin" \
     "effort rubric lost standing configuration precedence"
   assert_contains "$section" 'Use `low` for well-understood work' \
     "effort rubric lost its low fallback"
@@ -193,8 +193,8 @@ test_compressed_agents_owner_map() {
     "AGENTS.md lost the state-layout owner pointer"
   assert_grep 'header is the single owner of composed commands, ordering, digest contents' "$AGENTS" \
     "AGENTS.md lost the session-start owner pointer"
-  assert_grep '`docs/configuration.md` owns dispatch-profile and runtime-backend schemas' "$AGENTS" \
-    "AGENTS.md lost the dispatch-schema owner pointer"
+  assert_grep '`docs/configuration.md` owns the runtime-backend schema' "$AGENTS" \
+    "AGENTS.md lost the runtime-backend-schema owner pointer"
   assert_grep 'That skill owns registry syntax, delivery-mode selection' "$AGENTS" \
     "AGENTS.md lost the project-management owner pointer"
   assert_grep 'The delivery lifecycle is an always-loaded operational contract' "$AGENTS" \

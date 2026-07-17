@@ -8,7 +8,6 @@
 #          Lines: "MISSING: <tool> (install: <command>)",
 #                 "MISSING_MANUAL: <tool> (instructions: <url>)", "NEEDS_GH_AUTH",
 #                 "BACKEND_INVALID: <name> (known: <names>)",
-#                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
 #                 "PR_CHECK_MIGRATION: <private remediation>",
 #                 "TANGLE: <remediation>",
@@ -47,13 +46,11 @@
 #          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
 #          1.31.2.
-#          tasks-axi and quota-axi are required bootstrap tools (same class as
+#          tasks-axi is a required bootstrap tool (same class as
 #          lavish-axi). tasks-axi is also version and feature gated (0.1.1+
 #          with update --archive-body and mv [<id>...]); an installed but
 #          incompatible build reports MISSING like no-mistakes. A compatible
-#          tasks-axi default backend is silent. quota-axi is required because
-#          crew-dispatch quota-balanced may call it; fm-dispatch-select.sh still
-#          degrades at runtime when quota data is unavailable.
+#          tasks-axi default backend is silent.
 #          X mode is OPTIONAL and inert unless FM_HOME/.env has a non-empty
 #          FMX_PAIRING_TOKEN. When opted in, bootstrap requires curl+jq, writes
 #          the relay poll shim and 30s cadence config, and prints an FMX line.
@@ -400,7 +397,7 @@ secondmate_liveness_sweep() {
     [ -n "$target" ] || target="$window"
     verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null) || verdict="unknown"
     case "$harness" in
-      claude|codex|opencode|pi|grok|omp) ;;
+      omp) ;;
       *) [ "$verdict" = dead ] && verdict=unknown ;;
     esac
     case "$verdict" in
@@ -429,7 +426,7 @@ install_cmd() {
     treehouse) echo "curl -fsSL https://kunchenguid.github.io/treehouse/install.sh | sh" ;;
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
-    tasks-axi|quota-axi) echo "npm install -g $1" ;;
+    tasks-axi) echo "npm install -g $1" ;;
     *) return 1 ;;
   esac
 }
@@ -455,7 +452,7 @@ missing_tool_diagnostic() {
 # fm_backend_required_tools (bin/fm-backend.sh). So a herdr/zellij/cmux home is
 # never told tmux is missing, and only orca drops treehouse. A backend value with
 # no verified dependency set is reported before the universal checks continue.
-COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi quota-axi"
+COMMON_TOOLS="node git gh no-mistakes gh-axi chrome-devtools-axi lavish-axi tasks-axi"
 BACKEND=$(fm_backend_name)
 BACKEND_VALID=1
 if ! BACKEND_TOOLS=$(fm_backend_required_tools "$BACKEND"); then
@@ -642,92 +639,6 @@ EOF
   echo "FMX: X mode on - relay poll armed via state/x-watch.check.sh; 30s watcher cadence in config/x-mode.env"
 }
 
-crew_dispatch_validate() {
-  local file err
-  file="$CONFIG/crew-dispatch.json"
-  [ -f "$file" ] || return 0
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "MISSING: jq (install: $(install_cmd jq))"
-    return 0
-  fi
-  if ! jq -e . "$file" >/dev/null 2>&1; then
-    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - malformed JSON"
-    return 0
-  fi
-  err=$(jq -r '
-    def verified($h): ["claude","codex","opencode","pi","grok","omp"] | index($h);
-    def effort_ok($h; $e):
-      if $e == null then true
-      elif ($e | type) != "string" then false
-      elif $h == "claude" then (["low","medium","high","xhigh","max"] | index($e))
-      elif ($h == "codex" or $h == "omp") then (["low","medium","high","xhigh"] | index($e))
-      elif $h == "grok" then (["low","medium","high"] | index($e))
-      elif $h == "pi" then (["low","medium","high","xhigh","max"] | index($e))
-      elif $h == "opencode" then false
-      else true
-      end;
-    def use_profiles($u):
-      if ($u | type) == "array" then $u
-      elif ($u | type) == "object" then [$u]
-      else []
-      end;
-    def bad_efforts:
-      ([(.rules // [])[]? | use_profiles(.use?)[]? | {h: .harness, e: .effort}]
-        + (if (.default? | type) == "object" then [{h: .default.harness, e: .default.effort}] else [] end))
-      | map(select(.e != null))
-      | map(select((.h | type) == "string" and verified(.h)))
-      | map(select(. as $p | effort_ok($p.h; $p.e) | not))
-      | map("\(.h):\(.e)")
-      | unique;
-    if type != "object" then "top-level value must be an object"
-    elif has("rules") and (.rules | type) != "array" then "rules must be an array"
-    elif [(.rules // [])[]? | select(type != "object")] | length > 0 then "each rule must be an object"
-    elif [(.rules // [])[]? | select((.when? | type) != "string" or (.when | length) == 0)] | length > 0 then "each rule needs non-empty when"
-    elif [(.rules // [])[]? | select((.use? | type) != "object" and (.use? | type) != "array")] | length > 0 then "each rule needs use"
-    elif [(.rules // [])[]? | select((.use? | type) == "array" and (.use | length) == 0)] | length > 0 then "each rule needs at least one use profile"
-    elif [(.rules // [])[]? | use_profiles(.use?)[]? | select(type != "object")] | length > 0 then "each use profile must be an object"
-    elif [(.rules // [])[]? | use_profiles(.use?)[]? | select((.harness? | type) != "string" or (.harness | length) == 0)] | length > 0 then "each use profile needs harness"
-    elif [(.rules // [])[]? | select(has("select") and ((.select? | type) != "string" or (.select | length) == 0))] | length > 0 then "select must be a non-empty string"
-    elif [(.rules // [])[]? | .select? // empty | select(. != "quota-balanced")] | length > 0 then
-      "unknown select: " + ([ (.rules // [])[]? | .select? // empty | select(. != "quota-balanced") ] | unique | join(", "))
-    elif has("default") and (.default | type) != "object" then "default must be an object"
-    elif has("default") and ((.default.harness? | type) != "string" or (.default.harness | length) == 0) then "default needs harness when present"
-    else
-      ([(.rules // [])[]? | use_profiles(.use?)[]?.harness] + [.default?.harness?]
-        | map(select(. != null))
-        | map(select(. as $h | verified($h) | not))
-        | unique) as $bad_harnesses
-      | if ($bad_harnesses | length) > 0 then "unverified harness: " + ($bad_harnesses | join(", "))
-        elif (bad_efforts | length) > 0 then "invalid effort: " + (bad_efforts | join(", "))
-        else empty
-        end
-    end
-  ' "$file" 2>/dev/null || true)
-  if [ -n "$err" ]; then
-    echo "CREW_DISPATCH: invalid config/crew-dispatch.json - $err"
-    return 0
-  fi
-  if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ]; then
-    jq -r '
-    def profile($p):
-      ($p.harness | tostring)
-      + (if ($p.model? != null) then "/" + ($p.model | tostring)
-         elif ($p.effort? != null) then "/default"
-         else "" end)
-      + (if ($p.effort? != null) then "/" + ($p.effort | tostring) else "" end);
-    def use_label($r):
-      if ($r.use | type) == "array" then
-        ((if ($r.select? != null) then ($r.select | tostring) else "first" end)
-          + "[" + ([$r.use[] | profile(.)] | join(", ")) + "]")
-      else profile($r.use)
-      end;
-    (["BOOTSTRAP_INFO: crew dispatch active config/crew-dispatch.json"]
-      + [(.rules // [])[]? | "BOOTSTRAP_INFO: crew dispatch rule: " + (.when | tostring) + " -> " + use_label(.)]
-      + (if (.default? | type) == "object" then ["BOOTSTRAP_INFO: crew dispatch default: " + profile(.default)] else [] end))
-    | .[]
-  ' "$file"
-  fi
-}
 
 if [ "${1:-}" = "install" ]; then
   shift
@@ -789,12 +700,6 @@ if [ -n "$tangle_branch" ]; then
     echo "TANGLE: primary checkout on feature branch '$tangle_branch' (expected '$tangle_default'); the work is safe on that ref - restore the primary with: git -C $FM_ROOT checkout $tangle_default, then re-validate the branch in a proper worktree"
   fi
 fi
-crew=
-[ -f "$CONFIG/crew-harness" ] && crew=$(tr -d '[:space:]' < "$CONFIG/crew-harness" || true)
-if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != "default" ]; then
-  echo "BOOTSTRAP_INFO: crew harness override active: $crew"
-fi
-crew_dispatch_validate
 if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
   && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
   echo "BOOTSTRAP_INFO: tasks-axi available"

@@ -99,21 +99,19 @@ Verified the same session: a persisting parent process running a child command (
 
 The classifier (`fm_backend_tmux_agent_alive`) maps the observed name to `alive`, `dead`, or `unknown`:
 
-- `alive` - the name contains `claude`, `codex`, `opencode`, or `grok`. All four were confirmed to run as their own literal process name (`ps -ef`, 2026-07-07): `claude` and `codex` and `opencode` are each a native compiled binary (`file` reports Mach-O), so their `comm` is their own binary name with no interpreter wrapper to hide behind.
+- `alive` - omp (the only supported harness) runs under `bun`, not as its own binary, so this verdict never fires in practice for an omp crewmate (see the known gap below).
 - `dead` - the name is a bare shell (`zsh`, `bash`, `sh`, `dash`, `ash`, `ksh`, `mksh`, `tcsh`, `csh`, `fish`).
-- `unknown` - anything else, including an unreadable pane.
+- `unknown` - anything else, including an unreadable pane or a bare interpreter name (`bun`, `node`, `python`).
 
-### Known gap: `pi` and `omp` cannot be confidently classified
+### Known gap: `omp` cannot be confidently classified
 
-`pi` is a `#!/usr/bin/env node` script (confirmed via its shebang and installed path, 2026-07-07), so a live `pi` agent's pane reports `node` as its `pane_current_command`, not `pi` - verified by running a long-lived `node -e` script in a pane and confirming its foreground process is a genuine child reachable via `pgrep -P <pane_pid>` with an inspectable `ps -o args=` (the same technique `bin/fm-harness.sh`'s own self-detection uses when walking UP its ancestry), while `pi --version` itself was observed to exit too quickly under the same pane to reliably capture its live foreground state - real `pi` invocations were not available to test.
-Since `node` is also the generic name for a plain interpreter session, any future JS-based harness, or someone's unrelated node script, there is no way to attribute a bare `node` foreground process back to `pi` specifically from outside the pane without deeper (and fragile) argument introspection.
-`omp` (Oh My Pi, a Pi fork) shares the same gap: it runs under the `bun` interpreter (the same ancestry fact `bin/fm-lock.sh` uses, matching omp in a `bun`/`node`/`python` process's args rather than by its own `comm`), so a live omp pane reports a bare interpreter name.
-Confirmed 2026-07-17 by launching `omp` in a live tmux pane: `#{pane_current_command}` reads `bun`, and the pane's foreground child is `bun /Users/lex/.bun/bin/omp` (so, like `pi`'s `node`, `bun` is a generic interpreter name that cannot be added to the `alive` set without misclassifying unrelated `bun` processes); omp's busy-state regex is tracked separately and still pending a tmux-backend run.
+`omp` (Oh My Pi) runs under the `bun` interpreter (the same ancestry fact `bin/fm-lock.sh` uses, matching omp in a `bun`/`node`/`python` process's args rather than by its own `comm`), so a live omp pane reports a bare interpreter name.
+Confirmed 2026-07-17 by launching `omp` in a live tmux pane: `#{pane_current_command}` reads `bun`, and the pane's foreground child is `bun /Users/lex/.bun/bin/omp` (`bun` is a generic interpreter name that cannot be added to the `alive` set without misclassifying unrelated `bun` processes); omp's busy-state regex is tracked separately and still pending a tmux-backend live-pane run.
 The classifier deliberately reports `unknown` for bare interpreter names (`node`/`python`/`python3`, and omp's `bun`) rather than guess - per the secondmate-liveness sweep's correctness bar, a wrong `alive` is harmless but a wrong `dead` spins up a duplicate agent, so an unresolvable case must never be treated as confidently dead.
-Practical effect: a dead `pi` or `omp` secondmate is not auto-healed by the liveness sweep today; it is reported as `skipped: liveness probe inconclusive` instead, which still surfaces it for a human to act on.
-Resolving this would need either a `pi`-specific env marker inspectable from outside the process (mirroring `PI_CODING_AGENT=true`, which `bin/fm-harness.sh` already uses for self-detection but which is not readable from a different process without deeper introspection) or accepting the argument-inspection fragility - not attempted here.
+Practical effect: a dead `omp` secondmate is not auto-healed by the liveness sweep today; it is reported as `skipped: liveness probe inconclusive` instead, which still surfaces it for a human to act on.
+Resolving this would need either an omp-specific env marker inspectable from outside the process or accepting argument-inspection fragility - not attempted here.
 
 ## Limitations
 
 None specific to tmux for the reference path itself - it is the fully verified reference backend, while Orca and cmux are the backends without secondmate support.
-The agent-liveness probe above has one known gap: `pi`'s generic `node` and omp's generic `bun` process names (see above).
+The agent-liveness probe above has one known gap: omp's generic `bun` process name (see above).

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Real Pi/Herdr regression for exact-id secondmate marker delivery.
+# Real OMP/Herdr regression for exact-id secondmate marker delivery.
 #
-# This is opt-in because it launches a real interactive Pi process and a real
+# This is opt-in because it launches a real interactive OMP process and a real
 # isolated Herdr lab session.
 # It exercises the end-user command shape against metadata written by a real
-# fm-spawn.sh --secondmate launch, captures Pi's before_agent_start prompt bytes,
+# fm-spawn.sh --secondmate launch, captures OMP's before_agent_start prompt bytes,
 # and proves both sides of the routing boundary:
 #   - exact task id through explicit FM_HOME receives exactly one marker;
 #   - direct terminal input remains unmarked.
@@ -27,7 +27,7 @@ if [ "${FM_SEND_MARKER_HERDR_E2E:-0}" != 1 ]; then
   exit 0
 fi
 
-for tool in git herdr jq pi python3; do
+for tool in git herdr jq omp python3; do
   command -v "$tool" >/dev/null 2>&1 || { echo "skip: $tool not found"; exit 0; }
 done
 
@@ -36,10 +36,10 @@ SESSION=$("$LAB_HELPER" name fm-send-secondmate-marker-v7)
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/fm-send-marker-herdr-e2e.XXXXXX")
 SENDER_HOME="$TMP_ROOT/sender-home"
 SECOND_HOME="$TMP_ROOT/secondmate-home"
-CAPTURE="$TMP_ROOT/pi-before-agent.jsonl"
+CAPTURE="$TMP_ROOT/omp-before-agent.jsonl"
 FAKEBIN="$TMP_ROOT/fakebin"
 ORIGINAL_PATH=$PATH
-ID='marker-pi-sm'
+ID='marker-omp-sm'
 REQUEST='FM_MARKER_HERDR_E2E exact-id request'
 DIRECT='FM_MARKER_HERDR_DIRECT captain input'
 
@@ -93,19 +93,19 @@ You are a task-local secondmate used only for the marker transport regression.
 Stay idle and do not initiate work.
 EOF
 
-# The extension is already an explicit Pi -e resource in the real secondmate
+# The extension is already an explicit OMP -e resource in the real secondmate
 # launch template, so its project_trust hook can grant session-only trust before
 # project resources load. before_agent_start records the exact prompt bytes and
 # aborts before any provider request, keeping this transport regression local.
 CAPTURE_JSON=$(printf '%s' "$CAPTURE" | jq -Rs .)
-python3 - "$SECOND_HOME/.pi/extensions/fm-primary-turnend-guard.ts" "$CAPTURE_JSON" <<'PY'
+python3 - "$SECOND_HOME/.omp/extensions/fm-primary-turnend-guard.ts" "$CAPTURE_JSON" <<'PY'
 from pathlib import Path
 import sys
 
 path = Path(sys.argv[1])
 capture_json = sys.argv[2]
 source = path.read_text()
-import_anchor = 'import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n'
+import_anchor = 'import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";\n'
 source = source.replace(
     import_anchor,
     import_anchor
@@ -117,18 +117,18 @@ factory_anchor = 'export default function (pi: ExtensionAPI) {\n'
 replacement = '''export default function (pi: ExtensionAPI) {
   pi.on("project_trust", () => ({ trusted: "yes", remember: false }));
   pi.on("before_agent_start", (event, ctx) => {
-    fmAppendFileSync(fmCapturePath, `${JSON.stringify({ prompt: event.prompt, hex: Buffer.from(event.prompt, "utf8").toString("hex") })}\\n`);
+    fmAppendFileSync(fmCapturePath, `${JSON.stringify({ prompt: event.prompt, hex: Buffer.from(event.prompt, "utf8").toString("hex") })}\n`);
     ctx.abort();
   });
 '''
 if import_anchor not in source or factory_anchor not in source:
-    raise SystemExit("Pi extension insertion point missing")
+    raise SystemExit("OMP extension insertion point missing")
 path.write_text(source.replace(factory_anchor, replacement, 1))
 PY
 
 "$LAB_HELPER" provision "$SESSION"
 PATH="$FAKEBIN:$ORIGINAL_PATH" FM_GATE_REFUSE_BYPASS=1 FM_HOME="$SENDER_HOME" HERDR_SESSION="$SESSION" \
-  "$ROOT/bin/fm-spawn.sh" "$ID" "$SECOND_HOME" --secondmate --harness pi --backend herdr >/dev/null
+  "$ROOT/bin/fm-spawn.sh" "$ID" "$SECOND_HOME" --secondmate --harness omp --backend herdr >/dev/null
 
 META="$SENDER_HOME/state/$ID.meta"
 [ -f "$META" ] || fail "real secondmate spawn did not write exact-id metadata"
@@ -169,31 +169,31 @@ wait_for_idle() {
 }
 
 # The startup charter proves the CLI extension loaded. Wait until ctx.abort()
-# has remained idle long enough for the Pi composer to fully settle before
-# exercising it. A single native idle sample can precede Pi's final redraw.
+# has remained idle long enough for the OMP composer to fully settle before
+# exercising it. A single native idle sample can precede OMP's final redraw.
 wait_for_prompt 'Isolated marker capture secondmate' \
-  || fail "real Pi before_agent_start capture did not load for the startup charter"
-wait_for_idle || fail "real Pi did not become idle after the startup capture"
+  || fail "real OMP before_agent_start capture did not load for the startup charter"
+wait_for_idle || fail "real OMP did not become idle after the startup capture"
 
 PATH="$FAKEBIN:$ORIGINAL_PATH" FM_GATE_REFUSE_BYPASS=1 FM_HOME="$SENDER_HOME" \
   "$ROOT/bin/fm-send.sh" "$ID" "$REQUEST" >/dev/null
-wait_for_prompt "$REQUEST" || fail "real Pi did not receive the exact-id fm-send request"
+wait_for_prompt "$REQUEST" || fail "real OMP did not receive the exact-id fm-send request"
 GOT=$(jq -r --arg needle "$REQUEST" 'select(.prompt | contains($needle)) | .prompt' "$CAPTURE" | tail -1)
 [ "$GOT" = "${FM_FROMFIRST_MARK}${REQUEST}" ] \
-  || fail "real Pi exact-id prompt did not contain exactly one terminal-safe marker"$'\n'"--- bytes ---"$'\n'"$(printf '%s' "$GOT" | od -An -tx1)"
+  || fail "real OMP exact-id prompt did not contain exactly one terminal-safe marker"$'\n'"--- bytes ---"$'\n'"$(printf '%s' "$GOT" | od -An -tx1)"
 printf 'evidence: exact-id received-hex=%s\n' "$(printf '%s' "$GOT" | od -An -tx1 | tr -d ' \n')"
-pass "real Pi/Herdr: exact-id FM_HOME send delivers exactly one from-firstmate marker"
-wait_for_idle || fail "real Pi did not become idle after the exact-id capture"
+pass "real OMP/Herdr: exact-id FM_HOME send delivers exactly one from-firstmate marker"
+wait_for_idle || fail "real OMP did not become idle after the exact-id capture"
 
 # Direct terminal input bypasses fm-send's metadata-routed transformation and
 # therefore remains conversational captain input.
 "$LAB_HELPER" run "$SESSION" pane send-text "$PANE" "$DIRECT" >/dev/null
 "$LAB_HELPER" run "$SESSION" pane send-keys "$PANE" enter >/dev/null
-wait_for_prompt "$DIRECT" || fail "real Pi did not receive direct terminal input"
+wait_for_prompt "$DIRECT" || fail "real OMP did not receive direct terminal input"
 GOT=$(jq -r --arg needle "$DIRECT" 'select(.prompt | contains($needle)) | .prompt' "$CAPTURE" | tail -1)
 [ "$GOT" = "$DIRECT" ] || fail "direct captain input was changed or marked"$'\n'"--- bytes ---"$'\n'"$(printf '%s' "$GOT" | od -An -tx1)"
 if fm_message_from_firstmate "$GOT"; then
   fail "direct captain input was classified as from-firstmate"
 fi
 printf 'evidence: direct-input received-hex=%s\n' "$(printf '%s' "$GOT" | od -An -tx1 | tr -d ' \n')"
-pass "real Pi/Herdr: direct captain terminal input stays unmarked"
+pass "real OMP/Herdr: direct captain terminal input stays unmarked"
