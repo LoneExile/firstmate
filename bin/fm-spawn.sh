@@ -811,6 +811,22 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   fi
 
   validate_spawn_worktree "treehouse get" "$T"
+  # Slot-collision guard (fix-spawn-herdr-slot-drift): when a project the crew works
+  # on carries git submodules, treehouse's reset does not re-sync them, so a returned
+  # pooled slot stays dirty on the submodule gitlink and is never reused; the pool
+  # bloats and can eventually hand out a slot still in use by another live crew. That
+  # root cause is treehouse-side, but firstmate must never co-locate two crews in one
+  # worktree: refuse if the resolved slot is already claimed by another task's meta.
+  if [ -d "$STATE" ]; then
+    for _other_meta in "$STATE"/*.meta; do
+      [ -e "$_other_meta" ] || continue
+      [ "$(basename "$_other_meta" .meta)" = "$ID" ] && continue
+      _other_wt=$(sed -n 's/^worktree=//p' "$_other_meta" | head -1)
+      [ -n "$_other_wt" ] && [ "$_other_wt" = "$WT" ] || continue
+      echo "error: treehouse handed out worktree '$WT' already claimed by live task '$(basename "$_other_meta" .meta)' (slot-pool collision); refusing to co-locate two crews. Tear that task down or clear the treehouse pool, then retry." >&2
+      exit 1
+    done
+  fi
 fi
 
 # Per-task temp root: /tmp/fm-<id>/ with Go's build temp nested at gotmp/. Go won't

@@ -1061,6 +1061,35 @@ test_spawn_autodetect_nesting_resolves_tmux_silently() {
   rm -rf "/tmp/fm-$id"
   pass "fm-spawn.sh: auto-detect resolves nested tmux-in-herdr to tmux and stays silent end to end"
 }
+test_spawn_refuses_worktree_slot_collision() {
+  local proj wt data id state config out fb rc wt_real
+  proj="$TMP_ROOT/slotcollide-project"; wt="$TMP_ROOT/slotcollide-wt"; data="$TMP_ROOT/slotcollide-data"
+  id="slotcollidez6"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  fb=$(make_spawn_fakebin "$TMP_ROOT/slotcollide-fake" "$wt")
+  mkdir -p "$data/$id"; printf 'brief\n' > "$data/$id/brief.md"
+  state="$TMP_ROOT/slotcollide-state"; config="$TMP_ROOT/slotcollide-config"
+  mkdir -p "$state" "$config"
+
+  # A treehouse slot-pool collision (fix-spawn-herdr-slot-drift): another live crew
+  # already claims the exact worktree this spawn resolves. Pre-seed its meta with the
+  # RESOLVED (physical) worktree path fm-spawn computes; the guard must refuse.
+  wt_real=$(cd "$wt" && pwd -P)
+  printf 'window=firstmate:fm-otherz9\nworktree=%s\n' "$wt_real" > "$state/otherz9.meta"
+
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_TMUX_LOG="$TMP_ROOT/slotcollide.log" \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" omp 2>&1)
+  rc=$?
+  [ "$rc" -ne 0 ] || fail "spawn should refuse a worktree already claimed by another live task"$'\n'"$out"
+  assert_contains "$out" "slot-pool collision" "collision refusal did not cite the slot-pool collision"$'\n'"$out"
+  assert_contains "$out" "otherz9" "collision refusal did not name the colliding task"$'\n'"$out"
+  rm -rf "/tmp/fm-$id"
+  pass "fm-spawn.sh: refuses a treehouse slot already claimed by another live crew (slot-pool collision guard)"
+}
+
 
 test_backend_name_precedence
 test_backend_detect_precedence
@@ -1089,3 +1118,4 @@ test_spawn_refuses_unknown_fm_backend_env
 test_spawn_explicit_tmux_writes_no_meta_field
 test_spawn_explicit_backend_flag_beats_autodetect_herdr_env
 test_spawn_autodetect_nesting_resolves_tmux_silently
+test_spawn_refuses_worktree_slot_collision
