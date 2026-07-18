@@ -639,7 +639,11 @@ validate_worktree_teardown_safety() {
     secondmate|scout) return 0 ;;
   esac
 
-  if ! dirty_raw=$(git -C "$WT" status --porcelain 2>/dev/null); then
+  # --ignore-submodules=all: a merged crew often leaves ONLY a submodule-gitlink
+  # pointer diff (treehouse reset does not re-sync nested submodules), which is not
+  # the crew's own uncommitted work and must not block teardown. Real parent-repo
+  # file changes still surface here and refuse below.
+  if ! dirty_raw=$(git -C "$WT" status --porcelain --ignore-submodules=all 2>/dev/null); then
     if worktree_safety_blocked_by_lock "uncommitted changes"; then
       return "$TEARDOWN_WORKTREE_SAFETY_LOCK_BLOCKED"
     fi

@@ -866,6 +866,37 @@ test_dirty_worktree_refuses() {
   grep -q "uncommitted changes" "$case_dir/stderr" || fail "dirty-wt: refusal did not cite uncommitted changes"
   pass "dirty worktree is refused even when its committed work has landed (dirty always wins)"
 }
+test_submodule_gitlink_drift_allows() {
+  local case_dir rc pr_head
+  case_dir=$(make_case submodule-drift-allow)
+  write_meta "$case_dir" no-mistakes ship
+  printf '%s\n' 'pr=https://github.com/example/repo/pull/7' >> "$case_dir/state/task-x1.meta"
+  # Feature work plus a committed submodule, landed + merged. The ONLY remaining
+  # uncommitted change is a submodule-gitlink pointer diff (treehouse-style post-merge
+  # drift on a project the crew works on); teardown must tolerate it.
+  wt_commit_file "$case_dir" feature.txt hello "add feature"
+  git init -q "$case_dir/subsrc"
+  git -C "$case_dir/subsrc" -c user.email=t@t -c user.name=t commit -q --allow-empty -m s0
+  git -C "$case_dir/wt" -c protocol.file.allow=always -c user.email=t@t -c user.name=t submodule add -q "$case_dir/subsrc" sub
+  git -C "$case_dir/wt" -c user.email=t@t -c user.name=t commit -q -m "add submodule"
+  land_on_origin_main "$case_dir" feature.txt hello
+  pr_head=$(git -C "$case_dir/wt" rev-parse HEAD)
+  add_gh_pr_merged_for_head "$case_dir" "$pr_head"
+  # Pure gitlink drift: advance the submodule checkout, leave the parent pointer.
+  git -C "$case_dir/wt/sub" -c user.email=t@t -c user.name=t commit -q --allow-empty -m s1
+  git -C "$case_dir/wt" status --porcelain | grep -qE 'sub$' || fail "submodule-drift fixture did not produce a gitlink diff"
+
+  set +e
+  run_teardown "$case_dir" > "$case_dir/stdout" 2> "$case_dir/stderr"
+  rc=$?
+  set -e
+
+  expect_code 0 "$rc" "submodule-drift: teardown should tolerate a worktree whose only change is a submodule-gitlink diff"$'\n'"$(cat "$case_dir/stderr")"
+  if grep -q REFUSED "$case_dir/stderr"; then
+    fail "submodule-drift: teardown refused despite only submodule-gitlink drift"$'\n'"$(cat "$case_dir/stderr")"
+  fi
+  pass "worktree with only a submodule-gitlink drift tears down cleanly (drift tolerated)"
+}
 
 test_gh_error_and_content_absent_refuses() {
   local case_dir rc
@@ -1283,6 +1314,7 @@ test_pr_check_records_remote_head_when_local_lags
 test_content_in_default_fallback_allows
 test_content_fallback_refreshes_stale_origin_ref
 test_dirty_worktree_refuses
+test_submodule_gitlink_drift_allows
 test_gh_error_and_content_absent_refuses
 test_stale_index_lock_cleared_and_teardown_succeeds
 test_live_index_lock_is_never_removed_and_teardown_refuses
