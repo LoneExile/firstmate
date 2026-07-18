@@ -66,6 +66,8 @@ make_fake_root() {
   # fm-pr-lib.sh + fm-pr-host-lib.sh: teardown sources both for task-ID validation and PR host ops.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
   ln -s "$ROOT/bin/fm-pr-host-lib.sh" "$fake/bin/fm-pr-host-lib.sh"
+  # fm-worktree-lib.sh: teardown sources it to re-sync a returned slot's submodules.
+  ln -s "$ROOT/bin/fm-worktree-lib.sh" "$fake/bin/fm-worktree-lib.sh"
   # fm-guard.sh: stub (teardown calls it with `|| true`).
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
@@ -167,6 +169,7 @@ test_teardown_skips_gracefully_without_tasktmp() {
   # fm-pr-lib.sh + fm-pr-host-lib.sh: teardown sources both.
   ln -s "$ROOT/bin/fm-pr-lib.sh" "$fake/bin/fm-pr-lib.sh"
   ln -s "$ROOT/bin/fm-pr-host-lib.sh" "$fake/bin/fm-pr-host-lib.sh"
+  ln -s "$ROOT/bin/fm-worktree-lib.sh" "$fake/bin/fm-worktree-lib.sh"
   cat > "$fake/bin/fm-guard.sh" <<'SH'
 #!/usr/bin/env bash
 exit 0

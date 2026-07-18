@@ -100,6 +100,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-pr-lib.sh"
 # shellcheck source=bin/fm-pr-host-lib.sh
 . "$SCRIPT_DIR/fm-pr-host-lib.sh"
+# shellcheck source=bin/fm-worktree-lib.sh
+. "$SCRIPT_DIR/fm-worktree-lib.sh"
 if [ "$#" -lt 1 ] || ! fm_task_id_path_safe "$1"; then
   echo "error: invalid teardown request" >&2
   exit 2
@@ -253,7 +255,7 @@ remove_pr_poll_artifacts() {
   fi
 }
 
-# Resolve the PR number for a worktree branch via gh-axi. Echoes the number on a
+# Resolve the PR number for a worktree branch via the host-agnostic PR lib
 # single match and returns 0; returns non-zero on no match or any lookup failure,
 # so the caller treats it as "no PR found" (fail-safe).
 pr_number_from_branch() {
@@ -1112,6 +1114,11 @@ elif [ -d "$WT" ] && [ "$KIND" != secondmate ]; then
     echo "error: treehouse return failed for worktree $WT; teardown aborted" >&2
     exit 1
   }
+  # Returned slots keep a submodule-gitlink pointer diff (treehouse's reset does
+  # not recurse into submodules), which leaves the slot "dirty" and unreusable
+  # until hand-tidied. Re-align the returned worktree's submodules so the slot
+  # comes back clean. Best-effort; never fails teardown. See bin/fm-worktree-lib.sh.
+  fm_worktree_resync_submodules "$WT"
 fi
 
 if [ "$BACKEND" != orca ]; then
