@@ -703,6 +703,61 @@ test_arm_fails_loud_when_no_fresh_watcher_confirmable() {
   pass "arm reports FAILED and exits non-zero when no fresh watcher can be confirmed"
 }
 
+test_arm_waits_for_slow_starting_child_under_load() {
+  # Regression for fix-omp-watcher-lapse-under-load: under multi-crew host load a
+  # freshly forked watcher can take longer than the fast-path CONFIRM_TIMEOUT to
+  # source its libs, migrate checks, acquire the lock, and land its first beat. The
+  # arm must WAIT for a still-ALIVE child up to CONFIRM_MAX and confirm it started -
+  # never kill it and falsely report FAILED (which repeatedly took supervision down).
+  local dir state fakebin fakewatch armout armpid child i
+  dir=$(make_case arm-slow-child)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  mark_pr_check_migration_complete "$state"
+  # A watcher that is slow to cold-start (sleeps past the fast-path budget) but very
+  # much ALIVE, then acquires the lock + beats like the real watcher and blocks.
+  fakewatch="$dir/fake-fm-watch.sh"
+  cat > "$fakewatch" <<SH
+#!/usr/bin/env bash
+set -u
+sleep "\${FAKE_WATCH_DELAY:-3}"
+. "$LIB"
+st="\$FM_HOME/state"
+lock="\$st/.watch.lock"
+mkdir -p "\$lock" 2>/dev/null || true
+printf '%s\n' "\${BASHPID:-\$\$}" > "\$lock/pid"
+printf '%s\n' "\$FM_HOME" > "\$lock/fm-home"
+printf '%s\n' "\$FM_WATCH_OVERRIDE" > "\$lock/watcher-path"
+fm_pid_identity "\${BASHPID:-\$\$}" > "\$lock/pid-identity" 2>/dev/null || true
+touch "\$st/.last-watcher-beat"
+trap 'exit 0' TERM INT
+while :; do touch "\$st/.last-watcher-beat"; sleep 1; done
+SH
+  chmod +x "$fakewatch"
+  # Fast-path budget 1s is deliberately shorter than the child's 3s cold start; the
+  # generous cap (20s) leaves ample room. Pre-fix, the arm broke at 1s -> killed the
+  # child -> FAILED. Post-fix, it waits for the live child's beat -> started.
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_WATCH_OVERRIDE="$fakewatch" FAKE_WATCH_DELAY=3 \
+    FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_ARM_CONFIRM_TIMEOUT=1 FM_ARM_CONFIRM_MAX=20 FM_ARM_ATTACH_POLL=0.1 "$WATCH_ARM" > "$armout" &
+  armpid=$!
+  i=0
+  while [ "$i" -lt 200 ]; do
+    grep -qE 'watcher: (started|FAILED)' "$armout" 2>/dev/null && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  ! grep -qF 'watcher: FAILED' "$armout" || fail "arm falsely reported FAILED while a slow-but-alive child was still starting: $(cat "$armout")"
+  grep -qF 'watcher: started pid=' "$armout" || fail "arm did not confirm the slow-starting child: $(cat "$armout")"
+  child=$(sed -n 's/.*watcher: started pid=\([0-9][0-9]*\).*/\1/p' "$armout" | head -1)
+  { [ -n "$child" ] && is_live_non_zombie "$child"; } || fail "arm killed the slow-but-alive child instead of waiting for it: $(cat "$armout")"
+  kill "$child" 2>/dev/null || true
+  kill "$armpid" 2>/dev/null || true
+  wait "$armpid" 2>/dev/null || true
+  pass "arm waits for a slow-but-alive watcher child's first beat under load instead of killing it (no false FAILED)"
+}
+
 test_pid_identity_is_locale_invariant() {
   # The watcher records its process identity under one locale; arm/guard/turn-end
   # re-read it under the machine's ambient locale. ps's lstart date format follows
@@ -748,3 +803,4 @@ test_arm_hup_cleans_child_and_temp_output
 test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
+test_arm_waits_for_slow_starting_child_under_load

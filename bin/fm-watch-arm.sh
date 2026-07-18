@@ -53,13 +53,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
 
-WATCH="$SCRIPT_DIR/fm-watch.sh"
+WATCH="${FM_WATCH_OVERRIDE:-$SCRIPT_DIR/fm-watch.sh}"
 WATCH_LOCK="$STATE/.watch.lock"
 BEAT="$STATE/.last-watcher-beat"
 # "Fresh" reuses the guard's threshold so there is one definition of liveness.
 GRACE=${FM_GUARD_GRACE:-300}
 # How long to wait for a freshly forked watcher to acquire the lock and beat.
 CONFIRM_TIMEOUT=${FM_ARM_CONFIRM_TIMEOUT:-10}
+# CONFIRM_TIMEOUT is the FAST-PATH confirm budget - an idle host lands the first
+# beat in well under a second. Under multi-crew load a freshly forked watcher can
+# be slow to source its libs, run the check migration, and acquire the lock before
+# its first beat, but a still-ALIVE child is starting, not failed. The arm keeps
+# waiting on a live child up to this hard cap instead of killing it and falsely
+# reporting FAILED - the impatient kill repeatedly took supervision down under load
+# (a fixed 10s window that a busy host blows past). Give up only once the child has
+# exited (a real startup failure) or this cap elapses (a genuine hang).
+CONFIRM_MAX=${FM_ARM_CONFIRM_MAX:-60}
+[ "$CONFIRM_MAX" -ge "$CONFIRM_TIMEOUT" ] 2>/dev/null || CONFIRM_MAX=$CONFIRM_TIMEOUT
 # Poll interval while attached to an existing healthy watcher.
 ATTACH_POLL=${FM_ARM_ATTACH_POLL:-0.5}
 
@@ -193,6 +203,7 @@ child_done=0
 # until some other watcher legitimately holds the singleton (a startup race), or
 # until the child gives up. Only then print the honest line.
 deadline=$(( $(date +%s) + CONFIRM_TIMEOUT ))
+hard_deadline=$(( $(date +%s) + CONFIRM_MAX ))
 while :; do
   if healthy_watcher; then
     if [ "$HEALTHY_PID" = "$child" ]; then
@@ -228,7 +239,16 @@ while :; do
       exit 0
     fi
   fi
-  [ "$(date +%s)" -ge "$deadline" ] && break
+  now=$(date +%s)
+  if [ "$now" -ge "$deadline" ]; then
+    # Past the fast-path budget: a still-alive child is a slow cold start under
+    # load, not a dead watcher - keep waiting up to CONFIRM_MAX rather than killing
+    # a healthy starting watcher (a false FAILED that takes supervision down under
+    # load). Give up only once the child has exited or the hard cap elapses.
+    if ! fm_pid_alive "$child" || [ "$now" -ge "$hard_deadline" ]; then
+      break
+    fi
+  fi
   sleep 0.2
 done
 
