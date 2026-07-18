@@ -100,6 +100,8 @@ SUB_HOME_MARKER=".fm-secondmate-home"
 . "$SCRIPT_DIR/fm-gate-refuse-lib.sh"
 # shellcheck source=bin/fm-pr-lib.sh
 . "$SCRIPT_DIR/fm-pr-lib.sh"
+# shellcheck source=bin/fm-worktree-lib.sh
+. "$SCRIPT_DIR/fm-worktree-lib.sh"
 # Fail closed before any fleet mutation: a no-mistakes gate agent must never spawn
 # a direct report (see bin/fm-gate-refuse-lib.sh).
 fm_refuse_if_gate_agent
@@ -585,15 +587,6 @@ fi
 # (docs/herdr-backend.md "Known gaps").
 PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
 
-real_path_or_raw() {  # <path>
-  local path=$1 real
-  if real=$(cd "$path" 2>/dev/null && pwd -P); then
-    printf '%s\n' "$real"
-  else
-    printf '%s\n' "$path"
-  fi
-}
-
 # Session-provider container-ensure + task creation. tmux stays exactly as P1
 # left it (same session-name / new-window sequence, see bin/backends/tmux.sh);
 # a herdr spawn goes through the version-gated, workspace-per-HOME,
@@ -618,24 +611,6 @@ validate_spawn_worktree() {  # <source> <inspect-target>
     echo "error: $source did not yield an isolated worktree (resolved '$WT'; worktree root '${wt_top:-none}'; primary '$PROJ_ABS'); refusing to launch to avoid tangling the primary checkout. Inspect target $inspect_target" >&2
     exit 1
   fi
-}
-
-# Resolve a captured pane cwd UP to the outermost git worktree root. treehouse's
-# post_create hooks (recursive `git submodule update`, seed scripts) can transiently
-# leave the pane cwd INSIDE a nested submodule while provisioning, so the raw cwd may
-# be a submodule dir (e.g. <wt>/cozystack/libs/kubeovn-chart), not the treehouse
-# worktree root - and validate_spawn_worktree would accept that submodule root as a
-# valid isolated worktree. Walk up superprojects until none remains. For a repo with
-# no submodules the first --show-superproject-working-tree is empty, so this returns
-# the path unchanged: a safe no-op for every backend/repo.
-resolve_worktree_root() {  # <path> -> outermost superproject working tree (physical)
-  local d up
-  d=$(cd "$1" 2>/dev/null && pwd -P) || return 1
-  while up=$(git -C "$d" rev-parse --show-superproject-working-tree 2>/dev/null) && [ -n "$up" ]; do
-    up=$(cd "$up" 2>/dev/null && pwd -P) || break
-    d=$up
-  done
-  printf '%s\n' "$d"
 }
 
 W="fm-$ID"
@@ -791,20 +766,15 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # Compare against PROJ_ABS_REAL (physical), not PROJ_ABS: a symlinked project
   # prefix would otherwise make the pane's OS-level cwd read differ from
   # PROJ_ABS on the very first poll, before the pane has actually moved.
-  for _ in $(seq 1 60); do
-    p=$(spawn_current_path "$WT_TARGET" || true)
-    if [ -n "$p" ]; then
-      # Resolve up to the worktree root: the pane may transiently sit in a nested
-      # submodule while treehouse's post_create hooks run (see resolve_worktree_root),
-      # so the raw cwd can be a submodule dir rather than the worktree root.
-      root=$(resolve_worktree_root "$p" 2>/dev/null || true)
-      if [ -n "$root" ] && [ "$(real_path_or_raw "$root")" != "$PROJ_ABS_REAL" ]; then
-        WT="$root"
-        break
-      fi
-    fi
-    sleep 1
-  done
+  # Discover the worktree by polling the pane's foreground cwd until it SETTLES on
+  # a real slot. Accepting the first non-project cwd is unsafe: `treehouse get`
+  # transiently runs its foreground process from a different pool slot (the lowest,
+  # scanned first) before the subshell settles into the acquired slot, so the first
+  # read can misrecord the wrong slot (fm-spawn-worktree-misrecord, often slot 1).
+  # fm_worktree_discover_settled requires the same resolved root on two consecutive
+  # reads, so that one-shot startup transient can never win. See bin/fm-worktree-lib.sh.
+  _spawn_worktree_reader() { spawn_current_path "$WT_TARGET"; }
+  WT=$(fm_worktree_discover_settled _spawn_worktree_reader "$PROJ_ABS_REAL" 60 1) || WT=""
   if [ -z "$WT" ]; then
     echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
     exit 1
