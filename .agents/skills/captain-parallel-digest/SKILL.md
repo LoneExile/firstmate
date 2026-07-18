@@ -24,7 +24,7 @@ It parallelizes only the reading and drafting, and leaves the captain the single
 Use it inside a single wake-handling or intake turn when BOTH hold:
 
 - The primary harness is omp.
-- Two or more queued items each need genuine analysis before the captain can act - a finished scout report to digest, a crew diff or PR to review, or a new request to scope against the project and turn into a section 11 brief.
+- Two or more queued items each need genuine analysis before the captain can act - a finished scout report to digest, a crew diff or PR to review, a new request to scope against the project and turn into a section 11 brief, or a batch of queued items to check for whether the work is already live/satisfied before spending crew and pool slots on them.
 
 Do not reach for it for a single item, or for light items that need no analysis (a `done: PR ... green` wake is just `bin/fm-pr-check.sh` plus a one-line report).
 A single scout subagent for one heavy item is fine; the parallel win only exists at two or more.
@@ -37,6 +37,7 @@ Use the read-only `scout` agent for each, and give each one fully self-contained
 - Digest a finished scout's `data/<id>/report.md` into the findings and recommendation to relay.
 - Review a finished crew's diff or PR and return the concrete findings.
 - Scope a new request: read the project, classify ship vs scout and dispatchable vs blocked, and draft the section 11 brief text.
+- Triage whether a queued item is already satisfied or live: read its current cluster/config/code state and return "already live" (with the evidence) or "not live" (with what is missing), so the captain dispatches a crew only for the items that still need work. Prefer this fan-out over dispatching a crew-per-item just to discover some are already done, especially when the pool is near capacity.
 - Any investigation whose product is knowledge, not a change.
 
 ## What stays on the captain, always
