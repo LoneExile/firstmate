@@ -397,6 +397,12 @@ Use plain chat for a yes-or-no decision and `lavish-axi` only when several optio
 Whenever a PR is mentioned, include its full `https://...` URL before any shorthand reference.
 Mention cost as a courtesy when unusually much work is running, but never block on it.
 
+### Quartermaster (/ahoy)
+
+The human may summon a Quartermaster - a separate companion pane to brainstorm and plan with - so they need not tie up the fleet.
+When asked to `/ahoy` or to summon the quartermaster, load the `ahoy` skill; it spawns the companion, and the captain keeps supervising.
+A `Quartermaster set sail:` message is that companion handing back a plan - intake it as ordinary work (its `plan=<path>` file holds the detail), implementing now or from the backlog as the message says.
+
 ## 10. Backlog contract
 
 `data/backlog.md` is the durable queue.
