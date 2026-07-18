@@ -816,13 +816,33 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
   # pooled slot stays dirty on the submodule gitlink and is never reused; the pool
   # bloats and can eventually hand out a slot still in use by another live crew. That
   # root cause is treehouse-side, but firstmate must never co-locate two crews in one
-  # worktree: refuse if the resolved slot is already claimed by another task's meta.
+  # worktree. Refuse when the resolved slot is already claimed by another task's meta -
+  # UNLESS that peer is confidently NOT a live crew. No crew-meta reaper runs outside
+  # teardown, so a crashed or partially-torn-down task leaves a stale meta behind and
+  # treehouse may legitimately reissue that slot; refusing on a stale meta would deadlock
+  # the worktree forever. A peer is bypassed only on a confident not-live signal: its
+  # backend endpoint is gone (fm_backend_target_exists fails - crashed-closed/torn-down),
+  # or its agent has exited to a bare shell (fm_backend_agent_alive = dead). An `unknown`
+  # verdict with a live endpoint (e.g. a running omp under bun, which cannot be attributed
+  # from outside its pane) KEEPS the refusal, so the guard never goes toothless for the
+  # actual harness. Mirrors bin/fm-bootstrap.sh's secondmate-liveness sweep: never license
+  # an action (here, a spawn refusal) from a non-confident reading.
   if [ -d "$STATE" ]; then
     for _other_meta in "$STATE"/*.meta; do
       [ -e "$_other_meta" ] || continue
       [ "$(basename "$_other_meta" .meta)" = "$ID" ] && continue
       _other_wt=$(sed -n 's/^worktree=//p' "$_other_meta" | head -1)
       [ -n "$_other_wt" ] && [ "$_other_wt" = "$WT" ] || continue
+      _other_backend=$(fm_backend_of_meta "$_other_meta")
+      _other_target=$(fm_backend_target_of_meta "$_other_meta")
+      # Endpoint gone -> peer torn down or crashed-closed; its meta is stale.
+      if [ -z "$_other_target" ] || ! fm_backend_target_exists "$_other_backend" "$_other_target"; then
+        continue
+      fi
+      # Bare-shell pane -> peer agent has exited; treehouse may reissue this slot.
+      if [ "$(fm_backend_agent_alive "$_other_backend" "$_other_target")" = dead ]; then
+        continue
+      fi
       echo "error: treehouse handed out worktree '$WT' already claimed by live task '$(basename "$_other_meta" .meta)' (slot-pool collision); refusing to co-locate two crews. Tear that task down or clear the treehouse pool, then retry." >&2
       exit 1
     done

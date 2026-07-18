@@ -1071,11 +1071,13 @@ test_spawn_refuses_worktree_slot_collision() {
   state="$TMP_ROOT/slotcollide-state"; config="$TMP_ROOT/slotcollide-config"
   mkdir -p "$state" "$config"
 
-  # A treehouse slot-pool collision (fix-spawn-herdr-slot-drift): another live crew
+  # A treehouse slot-pool collision (fix-spawn-herdr-slot-drift): another LIVE crew
   # already claims the exact worktree this spawn resolves. Pre-seed its meta with the
-  # RESOLVED (physical) worktree path fm-spawn computes; the guard must refuse.
+  # RESOLVED (physical) worktree path fm-spawn computes, a tmux backend, and a present
+  # endpoint whose pane reports a non-shell foreground (fm_backend_agent_alive=unknown) -
+  # a live peer the guard must refuse to co-locate with.
   wt_real=$(cd "$wt" && pwd -P)
-  printf 'window=firstmate:fm-otherz9\nworktree=%s\n' "$wt_real" > "$state/otherz9.meta"
+  printf 'backend=tmux\nwindow=firstmate:fm-otherz9\nworktree=%s\n' "$wt_real" > "$state/otherz9.meta"
 
   out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
     FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
@@ -1088,6 +1090,101 @@ test_spawn_refuses_worktree_slot_collision() {
   assert_contains "$out" "otherz9" "collision refusal did not name the colliding task"$'\n'"$out"
   rm -rf "/tmp/fm-$id"
   pass "fm-spawn.sh: refuses a treehouse slot already claimed by another live crew (slot-pool collision guard)"
+}
+test_spawn_allows_worktree_when_peer_meta_is_stale() {
+  # A stale peer meta (crashed / partially-torn-down task, never reaped - no crew-meta
+  # reaper runs outside teardown) claims the same worktree, but its agent has exited to a
+  # bare shell. treehouse may legitimately reissue that slot, so the guard must BYPASS the
+  # stale peer and let the spawn proceed, never a permanent false refusal.
+  local proj wt data id state config fb out rc wt_real
+  proj="$TMP_ROOT/slotstale-project"; wt="$TMP_ROOT/slotstale-wt"; data="$TMP_ROOT/slotstale-data"
+  id="slotstalez6"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  # Fakebin whose tmux reports the peer pane as present (pane_id ok) but idling at a
+  # bare shell (pane_current_command=bash -> fm_backend_agent_alive=dead).
+  fb="$TMP_ROOT/slotstale-fake/fakebin"; mkdir -p "$fb"
+  cat > "$fb/tmux" <<SH
+#!/usr/bin/env bash
+set -u
+{ printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
+case "\${1:-}" in
+  display-message)
+    for a in "\$@"; do case "\$a" in
+      *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;;
+      *pane_current_command*) printf 'bash\\n'; exit 0 ;;
+    esac; done
+    printf 'firstmate\\n'; exit 0 ;;
+  list-windows) exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/tmux"
+  fm_fake_exit0 "$fb" treehouse
+  mkdir -p "$data/$id"; printf 'brief\n' > "$data/$id/brief.md"
+  state="$TMP_ROOT/slotstale-state"; config="$TMP_ROOT/slotstale-config"
+  mkdir -p "$state" "$config"
+  wt_real=$(cd "$wt" && pwd -P)
+  printf 'backend=tmux\nwindow=firstmate:fm-stalez9\nworktree=%s\n' "$wt_real" > "$state/stalez9.meta"
+
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_TMUX_LOG="$TMP_ROOT/slotstale.log" \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" omp 2>&1)
+  rc=$?
+  rm -rf "/tmp/fm-$id"
+  case "$out" in
+    *"slot-pool collision"*) fail "spawn wrongly refused a worktree whose only claimant is a stale (dead) peer meta"$'\n'"$out" ;;
+  esac
+  [ "$rc" -eq 0 ] || fail "spawn should complete when the colliding peer is a stale dead task (rc=$rc)"$'\n'"$out"
+  pass "fm-spawn.sh: bypasses a stale (dead-endpoint) peer meta and spawns (no permanent false refusal)"
+}
+test_spawn_allows_worktree_when_peer_endpoint_gone() {
+  # The canonical stale case advisory #1 flagged: a crashed / torn-down peer whose tmux
+  # window is already GONE still has an unreaped meta claiming this worktree. The guard's
+  # endpoint-existence probe must fail for it -> bypass -> spawn proceeds (no deadlock).
+  local proj wt data id state config fb out rc wt_real
+  proj="$TMP_ROOT/slotgone-project"; wt="$TMP_ROOT/slotgone-wt"; data="$TMP_ROOT/slotgone-data"
+  id="slotgonez6"
+  fm_git_worktree "$proj" "$wt" "fm/$id"
+  # Fakebin whose tmux reports the peer window (fm-gonez9) as GONE: any query naming it
+  # fails, while the spawn's own window queries succeed and discovery returns the worktree.
+  fb="$TMP_ROOT/slotgone-fake/fakebin"; mkdir -p "$fb"
+  cat > "$fb/tmux" <<SH
+#!/usr/bin/env bash
+set -u
+{ printf 'tmux'; for a in "\$@"; do printf '\\x1f%s' "\$a"; done; printf '\\n'; } >> "\${FM_TMUX_LOG:?}"
+case "\${1:-}" in
+  display-message)
+    _peer=
+    for a in "\$@"; do case "\$a" in *fm-gonez9*) _peer=1 ;; esac; done
+    for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
+    [ -n "\$_peer" ] && exit 1
+    printf 'firstmate\\n'; exit 0 ;;
+  list-windows) exit 0 ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/tmux"
+  fm_fake_exit0 "$fb" treehouse
+  mkdir -p "$data/$id"; printf 'brief\n' > "$data/$id/brief.md"
+  state="$TMP_ROOT/slotgone-state"; config="$TMP_ROOT/slotgone-config"
+  mkdir -p "$state" "$config"
+  wt_real=$(cd "$wt" && pwd -P)
+  printf 'backend=tmux\nwindow=firstmate:fm-gonez9\nworktree=%s\n' "$wt_real" > "$state/gonez9.meta"
+
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_TMUX_LOG="$TMP_ROOT/slotgone.log" \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" omp 2>&1)
+  rc=$?
+  rm -rf "/tmp/fm-$id"
+  case "$out" in
+    *"slot-pool collision"*) fail "spawn wrongly refused a worktree whose only claimant is a gone-endpoint peer meta"$'\n'"$out" ;;
+  esac
+  [ "$rc" -eq 0 ] || fail "spawn should complete when the colliding peer's endpoint is gone (rc=$rc)"$'\n'"$out"
+  pass "fm-spawn.sh: bypasses a peer meta whose backend endpoint is gone and spawns (no permanent false refusal)"
 }
 
 
@@ -1119,3 +1216,5 @@ test_spawn_explicit_tmux_writes_no_meta_field
 test_spawn_explicit_backend_flag_beats_autodetect_herdr_env
 test_spawn_autodetect_nesting_resolves_tmux_silently
 test_spawn_refuses_worktree_slot_collision
+test_spawn_allows_worktree_when_peer_meta_is_stale
+test_spawn_allows_worktree_when_peer_endpoint_gone
