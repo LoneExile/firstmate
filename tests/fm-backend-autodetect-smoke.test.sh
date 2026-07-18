@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # tests/fm-backend-autodetect-smoke.test.sh - real herdr smoke test for runtime
 # backend AUTO-DETECTION (bin/fm-backend.sh's fm_backend_detect, wired into
-# fm_backend_name between config/backend and the tmux default).
+# fm_backend_name between config/backend and the herdr default).
 #
 # Unlike tests/fm-backend-herdr.test.sh (fake herdr CLI) and
 # tests/fm-backend-herdr-smoke.test.sh (real herdr, adapter primitives called
@@ -100,11 +100,10 @@ env -u TMUX -u FM_BACKEND PATH="$PATH" HERDR_ENV=1 \
 status=$?
 [ "$status" -eq 0 ] || fail "fm-spawn.sh did not succeed auto-detecting herdr"$'\n'"--- stdout ---"$'\n'"$(cat "$OUT_FILE")"$'\n'"--- stderr ---"$'\n'"$(cat "$ERR_FILE")"
 
-assert_contains_local "$(cat "$ERR_FILE")" "NOTICE" \
-  "fm-spawn.sh did not print the auto-detect notice to stderr when selecting herdr"
-assert_contains_local "$(cat "$ERR_FILE")" "EXPERIMENTAL herdr backend" \
-  "fm-spawn.sh's auto-detect notice did not flag herdr as experimental"
-pass "real herdr: fm-spawn.sh auto-detects herdr from HERDR_ENV=1 (no explicit config) and prints the loud notice"
+case "$(cat "$ERR_FILE")" in
+  *NOTICE*|*"EXPERIMENTAL herdr"*) fail "fm-spawn.sh must NOT print an auto-detect notice for herdr (the first-class default)"$'\n'"$(cat "$ERR_FILE")" ;;
+esac
+pass "real herdr: fm-spawn.sh auto-detects herdr from HERDR_ENV=1 (no explicit config) and stays silent (first-class default)"
 
 META="$STATE/$ID.meta"
 [ -f "$META" ] || fail "fm-spawn.sh did not write a meta file for $ID"

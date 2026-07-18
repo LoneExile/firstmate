@@ -433,8 +433,8 @@ SH
         "an explicit Herdr home should not be reported as auto-detected"
     else
       out=$(TMUX='' HERDR_ENV=1 BASH_ENV="$mask" run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
-      assert_contains "$out" "NOTICE: auto-detected herdr runtime (HERDR_ENV=1)" \
-        "session start did not preserve the Herdr runtime auto-detection fallback"
+      assert_not_contains "$out" "NOTICE: auto-detected herdr runtime" \
+        "auto-detected herdr (the first-class default) must not print an experimental notice"
     fi
     assert_contains "$out" "SESSION START - $home" "the real session-start path did not run in the throwaway home"
     assert_not_contains "$out" "MISSING: tmux" "Herdr session start falsely required masked tmux"

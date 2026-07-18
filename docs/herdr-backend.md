@@ -1,4 +1,4 @@
-# Herdr runtime backend (experimental)
+# Herdr runtime backend
 
 This document records the empirical verification behind `bin/backends/herdr.sh`, the herdr session-provider adapter added in P2 of the runtime-backend abstraction.
 It is the herdr equivalent of the tmux facts recorded in the `harness-adapters` skill and `docs/architecture.md`'s "Runtime session backends" section.
@@ -11,7 +11,7 @@ All real-herdr verification in this document uses isolated sessions and guarded 
 
 ## Setup
 
-Pick herdr when you want native per-pane agent-state detection (busy/idle/blocked) instead of tmux's regex-based guessing, and you are comfortable running an experimental backend.
+Pick herdr for native per-pane agent-state detection (busy/idle/blocked) instead of tmux's regex-based guessing; it is the first-class default backend.
 
 Herdr is dual-licensed AGPL-3.0-or-later / commercial - see its LICENSE file (github.com/ogulcancelik/herdr) or https://herdr.dev.
 Firstmate only drives the `herdr` CLI as a separate process, which carries no AGPL obligations for firstmate users.
@@ -23,7 +23,7 @@ Prerequisites:
 - The universal firstmate prerequisites - a verified crew harness plus the required toolchain, owned by [`docs/configuration.md`](configuration.md) ("Harness support", "Toolchain"); treehouse still provides the worktree, herdr only provides the session.
 
 Select herdr by putting `herdr` in a local `config/backend` file - the durable way to pick it - or by exporting `FM_BACKEND=herdr` when you launch your harness for a one-off session; telling the first mate in chat to use herdr also works.
-It can also be auto-detected: when firstmate itself is running natively inside herdr (`HERDR_ENV=1`) and no explicit backend is set, firstmate auto-selects herdr and prints a one-time opt-out notice; running inside tmux nested in herdr always resolves to tmux instead.
+It can also be auto-detected: when firstmate itself is running natively inside herdr (`HERDR_ENV=1`) and no explicit backend is set, firstmate auto-selects herdr silently; running inside tmux nested in herdr always resolves to tmux instead.
 A herdr spawn refuses loudly before creating a session container or acquiring a ship/scout worktree if `herdr` or `jq` is missing or the installed herdr's protocol is older than verified.
 For `--secondmate` launches, secondmate home sync and inherited local-material propagation happen before this spawn-time backend gate.
 
@@ -35,21 +35,20 @@ You do not need to attach for routine supervision: from an active firstmate sess
 
 Verify it works by spawning a trivial task with `--backend herdr` and confirming the task's meta records `backend=herdr` plus `herdr_session=`, `herdr_workspace_id=`, `herdr_tab_id=`, and `herdr_pane_id=`; the workspace for your home should show the new `fm-<id>` tab.
 
-Limitations: herdr is experimental and still carries the open gaps documented below.
+Limitations: herdr still carries the open gaps documented below.
 Resolved backend evidence, including the 2026-07-06 symlinked-project-prefix isolation fix, is kept in the same follow-up log for auditability.
 
-## Status: experimental
+## Status: first-class default
 
-Herdr is experimental, exactly like every non-tmux backend in this design.
+Herdr is the first-class default backend.
 Select it by putting `herdr` in a local `config/backend` file, by exporting `FM_BACKEND=herdr`, or by telling the first mate in chat to use herdr.
 It can also be selected by runtime auto-detection when firstmate itself is running inside herdr and no explicit backend setting exists.
 Absent those three explicit settings, firstmate falls through to runtime auto-detection.
 When nothing is explicitly configured, `bin/fm-backend.sh`'s `fm_backend_detect` checks the runtime firstmate itself is executing inside: `$TMUX` (set inside every tmux pane, including a tmux pane nested inside a herdr pane) selects tmux and wins when present, `HERDR_ENV=1` (injected into every process herdr manages a pane for) selects herdr when `$TMUX` is absent, and cmux runtime signals select cmux only after those multiplexer markers are absent.
 See [`docs/cmux-backend.md`](cmux-backend.md#runtime-auto-detection) for cmux's primary `CMUX_WORKSPACE_ID` marker and macOS-only fallback signals.
-An auto-detected herdr spawn prints one loud stderr notice (set `config/backend` or pass `--backend tmux` to opt out).
-Auto-detecting tmux stays silent, since that reproduces today's unconfigured default byte-for-byte.
-Only when none of that resolves anything does firstmate fall back to the hard default, tmux.
-Absent `backend=` in a task's meta always means `tmux`; a herdr task carries an explicit `backend=herdr` line, while other experimental adapters carry their own backend values.
+Auto-detected herdr is silent, matching the unconfigured default byte-for-byte; auto-detected tmux also stays silent; only auto-detected cmux prints a one-time opt-out notice.
+Only when none of that resolves anything does firstmate fall back to the default, herdr.
+Absent `backend=` in a task's meta always means `tmux` (legacy compatibility); a herdr task carries an explicit `backend=herdr` line, while other non-default adapters carry their own backend values.
 A herdr spawn refuses loudly if `herdr` or `jq` is missing, or if the installed herdr's protocol is older than the verified minimum (`fm_backend_herdr_version_check`).
 
 ## Worktree provider stays treehouse
