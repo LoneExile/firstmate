@@ -52,11 +52,8 @@ jobs:
           set -eu
           npm install -g tasks-axi
           tasks-axi --version
-      - run: |
-          set -eu
-          for test_script in tests/*.test.sh; do
-            "$test_script"
-          done
+      - name: Behavior suite
+        run: bash bin/fm-test.sh
 
   macos-stock-bash:
     name: Stock macOS Bash snapshot compatibility
