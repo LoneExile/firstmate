@@ -17,7 +17,7 @@ Keep the always-inline routing rules in `AGENTS.md` authoritative: route by natu
 
 ## Routing table
 
-`data/secondmates.md` has one parser-compatible line per persistent domain supervisor:
+`data/secondmates.md` has one parser-compatible line per persistent second mate:
 
 ```markdown
 - <id> - <one-sentence charter summary> (home: <absolute-home-path>; scope: <natural-language responsibility>; projects: <project-a>, <project-b>; added <date>)
