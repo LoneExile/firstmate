@@ -65,14 +65,6 @@
 #                  written by this script; outside the worktree to avoid omp's trust gate)
 #     __OMPTURNEND__ absolute path to .omp/extensions/fm-primary-turnend-guard.ts in an omp secondmate home
 #     __OMPWATCH__  absolute path to .omp/extensions/fm-primary-omp-watch.ts in an omp secondmate home
-#   Verified templates optionally inject agent secrets at the final launch-command
-#   boundary. Injection is enabled only when `op` and
-#   `with-1password-local-development-reader` are on PATH and /usr/bin/security
-#   can read account kunchen for service op-local-sa with stdin
-#   closed and all output silenced. Otherwise every launch command stays byte-identical.
-#   When enabled, the agent executable runs through
-#   `with-1password-local-development-reader op run --env-file "$HOME/.config/agent-secrets.env" --`.
-#   Raw launch commands and backend setup shell lines are never wrapped.
 # The omp turn-end hook is the -e extension loaded at launch; it lives outside the
 # worktree (state/<id>.omp-ext.ts) so it never touches git's view.
 # On success prints: spawned <id> harness=<name> kind=<ship|scout|secondmate> mode=<mode> yolo=<on|off> window=<backend-target> worktree=<path>
@@ -83,7 +75,7 @@ set -eu
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
-  sed -n '2,86p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,72p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 case "${1:-}" in
@@ -306,21 +298,8 @@ fi
 
 # The verified launch command per adapter. The knowledge half of each adapter
 # (busy signature, exit command, dialogs, quirks) lives in the harness-adapters skill.
-agent_secrets_launch_prefix() {  # [security-bin]; production omits the test seam
-  local security_bin=${1:-/usr/bin/security}
-  command -v op >/dev/null 2>&1 || return 0
-  command -v with-1password-local-development-reader >/dev/null 2>&1 || return 0
-  "$security_bin" find-generic-password \
-    -a kunchen \
-    -s op-local-sa \
-    -w </dev/null >/dev/null 2>&1 || return 0
-  # shellcheck disable=SC2016  # $HOME must expand in the target pane shell
-  printf '%s' 'with-1password-local-development-reader op run --env-file "$HOME/.config/agent-secrets.env" -- '
-}
-
 launch_template() {
-  local harness=$1 kind=${2:-ship} security_bin=${3:-/usr/bin/security} agent_secrets_prefix
-  agent_secrets_prefix=$(agent_secrets_launch_prefix "$security_bin")
+  local harness=$1 kind=${2:-ship}
   # shellcheck disable=SC2016  # single quotes are deliberate: $(cat ...) expands in the crewmate pane, not here
   case "$harness" in
     # omp (Oh My Pi): a positional prompt starts the supervised interactive
@@ -330,9 +309,9 @@ launch_template() {
     # signal, and a secondmate loads the home's tracked .omp/extensions supervisors.
     omp)
       if [ "$kind" = secondmate ]; then
-        printf '%s%s' "$agent_secrets_prefix" 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPTURNEND__ -e __OMPWATCH__ "$(cat __BRIEF__)"'
+        printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPTURNEND__ -e __OMPWATCH__ "$(cat __BRIEF__)"'
       else
-        printf '%s%s' "$agent_secrets_prefix" 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(cat __BRIEF__)"'
+        printf '%s' 'omp --auto-approve __MODELFLAG____EFFORTFLAG__-e __OMPEXT__ "$(cat __BRIEF__)"'
       fi
       ;;
     *) return 1 ;;

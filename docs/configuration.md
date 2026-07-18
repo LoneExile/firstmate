@@ -162,7 +162,7 @@ The full cmux home label also includes a short hash of the resolved `FM_ROOT` pa
 
 omp (Oh My Pi) is the sole verified harness; firstmate, all crewmates, and all secondmates run on omp.
 The verified adapter knowledge - busy signature, exit command, interrupt key, skill-invocation syntax, and omp quirks - lives in [`.agents/skills/harness-adapters/SKILL.md`](../.agents/skills/harness-adapters/SKILL.md).
-Launch mechanics, including the verified command templates and optional agent-secrets injection contract, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh) and its `--help` output.
+Launch mechanics, including the verified command templates, live in [`bin/fm-spawn.sh`](../bin/fm-spawn.sh).
 The primary-session turn-end guard and seatbelt both live in `.omp/extensions/fm-primary-turnend-guard.ts`, documented in [`docs/turnend-guard.md`](turnend-guard.md).
 The primary-session watcher wake protocol is rendered at session start by [`bin/fm-supervision-instructions.sh`](../bin/fm-supervision-instructions.sh) from [`docs/supervision-protocols/omp.md`](supervision-protocols/omp.md); omp uses its tracked primary extensions (`.omp/extensions/`).
 `config/secondmate-harness` is a local, gitignored file containing an optional model and effort pin for secondmate launches, on one line: `omp [<model>] [<effort>]`.
