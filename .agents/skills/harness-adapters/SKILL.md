@@ -45,6 +45,14 @@ The omp seatbelt is wired into `.omp/extensions/fm-primary-turnend-guard.ts`: re
 The exact hook files, commands, and validation transcripts are owned by `docs/arm-pretool-check.md`.
 When changing any primary PreToolUse hook, validate the real harness behavior in a scratch project before trusting it, then update that doc.
 
+## Primary session-start nudge
+
+AGENTS.md section 3 remains the behavioral owner for session start, while the tracked omp adapter invokes `bin/fm-sessionstart-nudge.sh` as an idempotent enforcement layer.
+The wrapper prints only the instruction to run `bin/fm-session-start.sh`; it never runs the digest, wake drain, bootstrap sweeps, lock, or supervision arm itself.
+Full mechanics, scoping, and fail-open behavior live in `docs/sessionstart-nudge.md`.
+
+- omp: on the `session_start` event `.omp/extensions/fm-primary-turnend-guard.ts` runs the wrapper and, when it prints, injects the line with `pi.sendMessage({ customType: "firstmate-sessionstart-nudge", display: false })` so it enters model context without racing the launch prompt; omp's `session_start` carries no reason, so the wrapper's lock-in-ancestry check provides fire-once idempotency.
+
 ## Primary watcher supervision
 
 At session start, `bin/fm-session-start.sh` prints the omp watcher supervision block.

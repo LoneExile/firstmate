@@ -11,7 +11,7 @@
 // OMP auto-loads `.omp/extensions/`, never `.pi/`, so this is a separate copy.
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -61,9 +61,14 @@ function lockOwnership(): LockOwnership {
 }
 
 function markLoaded(): void {
-  if (lockOwnership() === "other") return;
-  mkdirSync(state, { recursive: true });
+  if (!existsSync(state) || lockOwnership() === "other") return;
   writeFileSync(marker, `${extensionVersion}\n${process.pid}\n`);
+}
+
+function runSessionstartNudge(): string {
+  const result = spawnSync(`${root}/bin/fm-sessionstart-nudge.sh`, [], { encoding: "utf8" });
+  if (result.status !== 0) return "";
+  return result.stdout.trim();
 }
 
 function runGuard(): Promise<{ code: number; stderr: string }> {
@@ -103,8 +108,21 @@ function runChecker(script: string, command: string): Promise<{ code: number; st
 }
 
 export default function (pi: ExtensionAPI) {
+  // omp fires session_start only on initial session load (SessionStartEvent has
+  // NO reason field, unlike Pi's startup/new/resume/compact). So we run the nudge
+  // unconditionally here rather than gating on a reason: bin/fm-sessionstart-nudge.sh's
+  // own lock-in-ancestry check makes it fire at most once per session (silent once
+  // bootstrap owns the home lock). It is injected as a hidden custom message (not
+  // sendUserMessage) so it enters model context without racing the first prompt.
   pi.on?.("session_start", () => {
+    const nudge = runSessionstartNudge();
     markLoaded();
+    if (!nudge) return;
+    try {
+      pi.sendMessage({ customType: "firstmate-sessionstart-nudge", content: nudge, display: false });
+    } catch {
+      // Fail open: never wedge session start on a nudge-delivery error.
+    }
   });
 
   pi.on("tool_call", async (event) => {
