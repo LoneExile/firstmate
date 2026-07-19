@@ -630,14 +630,18 @@ test_spawn_fallback_chain_and_crew_scout_unaffected() {
   printf 'brief\n' > "$home/data/$id/brief.md"
   printf 'omp sonnet medium\n' > "$home/config/secondmate-harness"
   : > "$launchlog"
+  # Keep spawn stderr: a missing treehouse / failed lease used to die as a bare
+  # kind!=ship with both streams discarded (the 29bc820 migration miss).
+  crew_err="$w/crew-spawn.err"
   PATH="$fakebin:$BASE_PATH" TMUX="fake,1,0" \
     FM_ROOT_OVERRIDE="$ROOT" FM_HOME="$home" \
     FM_STATE_OVERRIDE="$home/state" FM_DATA_OVERRIDE="$home/data" \
     FM_PROJECTS_OVERRIDE="$home/projects" FM_CONFIG_OVERRIDE="$home/config" \
     FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$wt" FM_FAKE_LAUNCH_LOG="$launchlog" \
-    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" >/dev/null 2>&1
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" >"$w/crew-spawn.out" 2>"$crew_err" || true
   meta="$home/state/$id.meta"
-  [ "$(meta_field "$meta" kind)" = ship ] || fail "crew-unaffected: expected an ordinary ship task"
+  [ "$(meta_field "$meta" kind)" = ship ] \
+    || fail "crew-unaffected: expected an ordinary ship task"$'\n'"--- spawn stderr ---"$'\n'"$(cat "$crew_err" 2>/dev/null || true)"$'\n'"--- spawn stdout ---"$'\n'"$(cat "$w/crew-spawn.out" 2>/dev/null || true)"
   [ "$(meta_field "$meta" harness)" = omp ] || fail "crew-unaffected: crew harness not omp"
   [ "$(meta_field "$meta" model)" = default ] || fail "crew-unaffected: crew task must not invent a model"
   [ "$(meta_field "$meta" effort)" = default ] || fail "crew-unaffected: crew task must not invent an effort"
