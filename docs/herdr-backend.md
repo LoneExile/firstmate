@@ -362,6 +362,14 @@ Together, those gaps let a genuinely still-working herdr crew read as not provab
 The cross-branch attribution fallback now uses the real `no-mistakes runs` command, and the watcher checks provably-working evidence before a stale status-log verb can make a stale pane terminal.
 This does not mask a genuinely human-blocked agent (a permission dialog, not mid-tool-call): that pane does not render the busy banner, so the corroboration still correctly reports not-busy for it.
 
+**Update (2026-07-19): omp now has full lifecycle-hook authority; the screen-detection premise above is superseded for omp panes.**
+`herdr agent explain <omp-pane> --json` on omp 17.0.5 reports `screen_detection_skipped: true` with `screen_detection_skip_reason: full_lifecycle_hook_authority` on every omp pane (captain and crews).
+omp reports its own turn lifecycle to herdr natively (its `agent_session.source` is `herdr:omp`), so herdr disables its own screen scraping and returns omp's authoritative `agent_status`.
+Verified live and read-only: an omp pane mid-turn reads `agent_status: working` while `visible_working: false` (the screen-scrape signal the old gap relied on is not even consulted) - i.e. the "reads idle during a long foreground tool call" failure mode does not occur on an omp pane under hook authority; `working` persists for the whole turn that invoked the tool.
+This is omp-native, not firstmate: firstmate's extensions make zero `pane report-agent` calls (they only touch the turn-end marker), and this authority mode is not configured anywhere in firstmate.
+Consequence: for omp panes, `agent get`'s `agent_status` is already authoritative, so the `crew_pane_is_busy` tail-regex corroboration of a native `idle` verdict (the fix above) is now belt-and-suspenders rather than load-bearing on herdr+omp; it still matters for tmux and any non-hook-authority backend.
+Not yet verified: whether omp reports `blocked` to herdr on an `ask`/decision (only `working`/`idle` were observed live; the omp package is minified). **[unverified]** Treat needs-decision detection as still owned by the crew status-log verb until confirmed.
+
 ## Slash/`$` autocomplete popup hazard (confirmed, same mitigation as tmux)
 
 Typing `/mem` into a live omp composer inside a herdr pane and reading the pane back within 0.1 seconds already shows the full autocomplete popup.
