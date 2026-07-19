@@ -61,6 +61,10 @@ When in doubt, write the fact into the skill or doc first, and add only the one-
 A new skill is dead weight if nothing loads it.
 Every new skill needs its load trigger declared inline: section 13 for agent-only reference skills, or the relevant operating section for anything else.
 State the trigger as a condition ("load before X", "load on Y wake"), never as a vague pointer.
+Then steer that trigger at the layer matching its DETECTABILITY, not always the index:
+- Deterministically detectable from state (a countable condition, a file, an endpoint) -> emit a runtime diagnostic / `NUDGE_*` line from the digest generator and handle it in `bootstrap-diagnostics`; a passive index entry alone does not get an executable skill loaded (the `captain-parallel-digest` adoption miss: 0 uses under a §13-only trigger).
+- Judgment-only (wedged-vs-slow, "might already be live", scope-this-request) -> an imperative at the decision point where the judgment is made, never the distant index.
+- A §13 index entry is discovery, never the SOLE steering for a skill you actually want executed.
 Briefs for tasks that touch firstmate's own tracked material should tell the crewmate to load this skill.
 `bin/fm-brief.sh`'s `REPO` argument is a caller-supplied string with no reliable signal that it names firstmate's own repo, unlike a project registered in `data/projects.md`, so there is no clean point inside the scaffold to detect this case automatically.
 Firstmate adds this skill's load instruction to firstmate-repo briefs by hand instead.

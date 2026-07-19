@@ -242,3 +242,33 @@ test_check_output_is_queued
 test_atomic_double_drain
 test_drain_dedupes_obvious_duplicates
 test_drain_asserts_watcher_liveness
+
+# NUDGE_PARALLEL_DIGEST also fires from the wake digest: fm-wake-drain runs at the
+# top of every wake turn, so crews finishing mid-session nudge the captain to
+# batch-review. Assert both drain exit paths (empty queue + drained) emit at >=2
+# done, and stay silent below the threshold.
+test_parallel_digest_nudge_on_drain() {
+  local dir state out
+  dir=$(make_case pd-drain)
+  state="$dir/state"
+  printf 'kind=ship\n'  > "$state/x.meta"; printf 'done: PR merged\n'    > "$state/x.status"
+  printf 'kind=scout\n' > "$state/y.meta"; printf 'done: report ready\n' > "$state/y.status"
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN")
+  case "$out" in
+    *"NUDGE_PARALLEL_DIGEST: 2 crews/scouts are done and awaiting review this turn"*) : ;;
+    *) fail "wake-drain (empty-queue path) with 2 done crews must emit the nudge, got: $out" ;;
+  esac
+  append_wake "$state" signal "x" "signal: $state/x.status"
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN")
+  case "$out" in
+    *NUDGE_PARALLEL_DIGEST*) : ;;
+    *) fail "wake-drain (drained path) with 2 done crews must emit the nudge, got: $out" ;;
+  esac
+  rm -f "$state/y.meta" "$state/y.status"
+  out=$(FM_STATE_OVERRIDE="$state" "$DRAIN")
+  case "$out" in
+    *NUDGE_PARALLEL_DIGEST*) fail "wake-drain with 1 done crew must NOT emit the nudge, got: $out" ;;
+  esac
+  pass "fm-wake-drain: NUDGE_PARALLEL_DIGEST fires at >=2 done on both drain paths, silent below threshold"
+}
+test_parallel_digest_nudge_on_drain

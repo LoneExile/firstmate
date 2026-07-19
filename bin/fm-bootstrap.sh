@@ -13,6 +13,7 @@
 #                 "TANGLE: <remediation>",
 #                 "SECONDMATE_SYNC: secondmate <id>: skipped: <reason>",
 #                 "NUDGE_SECONDMATES: secondmate <id>: send failed: <reason>",
+#                 "NUDGE_PARALLEL_DIGEST: <N> crews/scouts are done and awaiting review this turn",
 #                 "BOOTSTRAP_INFO: nudged fm-<id> with '<message>'",
 #                 "SECONDMATE_LIVENESS: secondmate <id>: skipped: <reason>|respawn failed: <reason>",
 #                 "FMX: X mode on ..." or "FMX: X mode off ...".
@@ -97,6 +98,8 @@ DATA="${FM_DATA_OVERRIDE:-$FM_HOME/data}"
 . "$SCRIPT_DIR/fm-x-lib.sh"
 # shellcheck source=bin/fm-backend.sh disable=SC1091
 . "$SCRIPT_DIR/fm-backend.sh"
+# shellcheck source=bin/fm-parallel-digest-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-parallel-digest-lib.sh"
 
 fleet_sync_origin_backed_project_count() {
   local count proj
@@ -731,6 +734,10 @@ if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
   && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
   echo "BOOTSTRAP_INFO: tasks-axi available"
 fi
+# captain-parallel-digest NUDGE: read-only, so it runs in BOTH the normal and the
+# detect-only (read-only session) paths - alongside the detect lines above, before
+# the mutating sweeps below. Advisory (never gates); omp-only; fires only at >=2.
+fm_parallel_digest_nudge_line "$STATE" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)"
 if [ "${FM_BOOTSTRAP_DETECT_ONLY:-0}" != 1 ]; then
   secondmate_sync
   secondmate_liveness_sweep

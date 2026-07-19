@@ -705,3 +705,26 @@ test_fleet_sync_timeout_empty_override_uses_default
 test_fleet_sync_timeout_is_computed_before_launch
 test_routine_bootstrap_confirmations_are_silent
 test_routine_bootstrap_contract_runs_under_system_bash
+
+# NUDGE_PARALLEL_DIGEST: emitted (real omp harness) only at >=2 done crews/scouts,
+# on the read-only detect path (DETECT_ONLY=1) so it runs even in a refused session.
+test_parallel_digest_nudge() {
+  local home out
+  home="$TMP_ROOT/pd-nudge/home"; mkdir -p "$home/state"
+  printf 'kind=ship\n' > "$home/state/x.meta"; printf 'done: PR merged\n' > "$home/state/x.status"
+  printf 'kind=scout\n' > "$home/state/y.meta"; printf 'done: report ready\n' > "$home/state/y.status"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_ROOT_OVERRIDE="$home" \
+    FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  case "$out" in
+    *"NUDGE_PARALLEL_DIGEST: 2 crews/scouts are done and awaiting review this turn"*) : ;;
+    *) fail "bootstrap with 2 done crews must emit the parallel-digest nudge, got: $out" ;;
+  esac
+  rm -f "$home/state/y.meta" "$home/state/y.status"
+  out=$(FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" FM_ROOT_OVERRIDE="$home" \
+    FM_BOOTSTRAP_DETECT_ONLY=1 "$ROOT/bin/fm-bootstrap.sh" 2>/dev/null)
+  case "$out" in
+    *NUDGE_PARALLEL_DIGEST*) fail "bootstrap with 1 done crew must NOT emit the nudge, got: $out" ;;
+  esac
+  pass "fm-bootstrap: emits NUDGE_PARALLEL_DIGEST only at >=2 done crews (omp harness, detect-only path)"
+}
+test_parallel_digest_nudge

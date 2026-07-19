@@ -5,6 +5,8 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=bin/fm-wake-lib.sh
 . "$SCRIPT_DIR/fm-wake-lib.sh"
+# shellcheck source=bin/fm-parallel-digest-lib.sh disable=SC1091
+. "$SCRIPT_DIR/fm-parallel-digest-lib.sh"
 
 DRAIN_TMP=
 DRAIN_LOCK_HELD=false
@@ -46,6 +48,7 @@ DRAIN_LOCK_HELD=true
 if [ ! -s "$FM_WAKE_QUEUE" ]; then
   : > "$FM_WAKE_QUEUE"
   assert_watcher_liveness
+  fm_parallel_digest_nudge_line "$STATE" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)"
   exit 0
 fi
 
@@ -58,4 +61,5 @@ fm_wake_print_deduped "$DRAIN_TMP" || exit "$?"
 rm -f "$DRAIN_TMP"
 DRAIN_TMP=
 assert_watcher_liveness
+fm_parallel_digest_nudge_line "$STATE" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)"
 exit 0
