@@ -1142,6 +1142,25 @@ fm_backend_herdr_busy_state() {  # <target>
     "$(fm_backend_herdr_agent_status_raw "$FM_BACKEND_HERDR_SESSION" "$FM_BACKEND_HERDR_PANE")"
 }
 
+# fm_backend_herdr_native_status_authoritative: 0 if <target>'s agent_status is
+# herdr-AUTHORITATIVE rather than a screen-scrape guess - herdr skipped its own
+# screen detection (screen_detection_skipped) because the agent reports its full
+# turn lifecycle natively (omp's full_lifecycle_hook_authority; agent_session.source
+# herdr:omp). Under that authority agent.get reads `working` for the whole span of
+# a long foreground tool call, so a native `idle`/`done` verdict is genuinely
+# not-working and needs no pane-regex corroboration. Returns 1 for a scraped
+# verdict, a non-hook-authority agent, or an unreadable target, so the caller keeps
+# its heuristic fallback. Reads the same `agent get` shape fm_backend_herdr_busy_state
+# uses; it is a second read after the busy verdict, but only on the crew-state idle
+# branch (bin/fm-crew-state.sh), never the watcher poll loop.
+fm_backend_herdr_native_status_authoritative() {  # <target>
+  fm_backend_herdr_target_ready "$1" || return 1
+  local out skipped
+  out=$(fm_backend_herdr_cli "$FM_BACKEND_HERDR_SESSION" agent get "$FM_BACKEND_HERDR_PANE" 2>/dev/null) || return 1
+  skipped=$(printf '%s' "$out" | jq -r '.result.agent.screen_detection_skipped // false' 2>/dev/null)
+  [ "$skipped" = true ]
+}
+
 # fm_backend_herdr_wait_for_working: poll <session>:<pane_id>'s NATIVE
 # agent-state (agent get) up to <polls> times spread evenly across
 # <budget-seconds>, returning on stdout the STRONGEST signal observed:

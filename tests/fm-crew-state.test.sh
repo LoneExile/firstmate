@@ -113,7 +113,11 @@ case "${1:-}" in
     case "${2:-}" in
       get)
         [ -n "${FM_FAKE_HERDR_AGENT_STATUS:-}" ] || exit 1
-        printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$FM_FAKE_HERDR_AGENT_STATUS"
+        if [ "${FM_FAKE_HERDR_HOOK_AUTHORITY:-0}" = 1 ]; then
+          printf '{"result":{"agent":{"agent_status":"%s","screen_detection_skipped":true,"agent_session":{"agent":"omp","source":"herdr:omp"}}}}\n' "$FM_FAKE_HERDR_AGENT_STATUS"
+        else
+          printf '{"result":{"agent":{"agent_status":"%s"}}}\n' "$FM_FAKE_HERDR_AGENT_STATUS"
+        fi
         exit 0 ;;
     esac ;;
 esac
@@ -158,9 +162,10 @@ reset_fakes() {
   FM_FAKE_HERDR_BUSY=0
   FM_FAKE_HERDR_MISSING=0
   FM_FAKE_HERDR_AGENT_STATUS=""
+  FM_FAKE_HERDR_HOOK_AUTHORITY=0
   FM_FAKE_CI_LOGS=""
   export FM_FAKE_AXI_STATUS FM_FAKE_AXI_STATUS_RUN FM_FAKE_RUNS_LIST FM_FAKE_BUSY FM_FAKE_TMUX_MISSING
-  export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_CI_LOGS
+  export FM_FAKE_HERDR_BUSY FM_FAKE_HERDR_MISSING FM_FAKE_HERDR_AGENT_STATUS FM_FAKE_HERDR_HOOK_AUTHORITY FM_FAKE_CI_LOGS
 }
 
 # --- run-object fixtures (TOON, as `no-mistakes axi status` emits) -----------
@@ -803,16 +808,17 @@ test_no_run_herdr_unknown_uses_backend_capture() {
   pass "herdr unknown native state falls back to backend capture busy regex"
 }
 
-# Regression: herdr's agent.get reports generation state ("working" only while
-# the model is actively streaming a turn - docs/herdr-backend.md "Busy state"),
-# not "this crew's tool call is still in progress". A crew blocked on its own
-# long-running foreground `no-mistakes axi run` (no --yes; blocks until a gate
-# or outcome) is not generating for that whole span, so agent.get can read
-# idle while the pane's own rendered text still shows the busy banner
-# (BUSY_REGEX) for the entire call. `idle` must be corroborated with that text
-# exactly like `unknown` already is, not trusted outright - the bug this
-# regression pins: crew_pane_is_busy previously returned "not busy" on a bare
-# `idle` verdict without ever looking at the pane.
+# Regression (now the NON-authoritative path after R1'): when the herdr read is a
+# screen-scrape (screen_detection_skipped not set - no omp hook authority),
+# agent.get reports generation state ("working" only while streaming - see
+# docs/herdr-backend.md "Busy state"), not "this crew's tool call is still in
+# progress". A crew blocked on its own long-running foreground `no-mistakes axi
+# run` (no --yes) is not generating for that whole span, so a scraped agent.get
+# can read idle while the pane still shows the busy banner (BUSY_REGEX). Such a
+# NON-authoritative idle must be corroborated with the pane text, exactly like
+# `unknown` - not trusted outright (the bug this pins: crew_pane_is_busy once
+# returned "not busy" on a bare idle without looking at the pane). The
+# authoritative-idle counterpart is test_no_run_herdr_idle_hook_authority_trusts_native.
 test_no_run_herdr_idle_agent_status_corroborated_by_busy_pane() {
   command -v jq >/dev/null 2>&1 || { pass "herdr idle corroboration skipped without jq"; return; }
   reset_fakes
@@ -853,6 +859,37 @@ test_no_run_herdr_idle_agent_status_and_idle_pane_stays_idle() {
   assert_not_contains "$out" "source: pane" "herdr idle agent_status with an idle pane must not read as busy from the pane"
   assert_contains "$out" "source: status-log" "herdr idle agent_status with an idle pane falls to the status log"
   pass "herdr idle agent_status with a genuinely idle pane stays not-busy (no regression for a human-blocked agent)"
+}
+
+# R1' positive case: under omp full-lifecycle hook authority
+# (screen_detection_skipped=true, agent_session.source=herdr:omp) agent.get's
+# `idle` is AUTHORITATIVE - agent.get reads `working` mid-tool, so idle means
+# genuinely not-working. crew_pane_is_busy must TRUST it and NOT corroborate
+# against the pane, even when a stale busy banner ("esc to interrupt") lingers in
+# the scrollback - the exact false-busy the old blanket corroboration produced.
+test_no_run_herdr_idle_hook_authority_trusts_native() {
+  command -v jq >/dev/null 2>&1 || { pass "herdr hook-authority idle trust skipped without jq"; return; }
+  reset_fakes
+  local d; d=$(new_case herdr-idle-hook-authority)
+  make_repo_on_branch "$d/wt" fm/feat-herdr-ha
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-herdr-ha.meta" "window=default:w1:p5" "worktree=$d/wt" "kind=ship" "backend=herdr"
+  # A busy banner is stale in the scrollback (FM_FAKE_HERDR_BUSY=1) and the status
+  # log says needs-decision (parked) - which the busy-pane corroboration path could
+  # never produce (that yields state: working, source: pane). Under hook authority
+  # the idle read is trusted, the banner ignored, and the crew falls through to the log.
+  printf 'needs-decision: which database?\n' > "$d/state/feat-herdr-ha.status"
+  FM_FAKE_AXI_STATUS=""
+  FM_FAKE_RUNS_LIST=""
+  FM_FAKE_TMUX_MISSING=1
+  FM_FAKE_HERDR_AGENT_STATUS=idle
+  FM_FAKE_HERDR_BUSY=1
+  FM_FAKE_HERDR_HOOK_AUTHORITY=1
+  local out; out=$(run_crew_state "$d" feat-herdr-ha)
+  assert_not_contains "$out" "source: pane" "authoritative idle must NOT corroborate the stale busy banner"
+  assert_contains "$out" "state: parked" "authoritative idle falls through to the status-log verb (parked), not the busy pane"
+  assert_contains "$out" "source: status-log" "authoritative idle uses the status log, not the pane"
+  pass "herdr idle under hook authority is trusted (stale busy banner ignored), unlike a scraped idle"
 }
 
 # (g) no run + idle pane -> the status-log verb, as-is
@@ -1163,6 +1200,7 @@ test_no_run_busy_pane
 test_no_run_herdr_unknown_uses_backend_capture
 test_no_run_herdr_idle_agent_status_corroborated_by_busy_pane
 test_no_run_herdr_idle_agent_status_and_idle_pane_stays_idle
+test_no_run_herdr_idle_hook_authority_trusts_native
 test_no_run_idle_pane_uses_log
 test_no_run_idle_pane_uses_keyed_log
 test_no_run_idle_pane_paused

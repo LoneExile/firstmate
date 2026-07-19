@@ -141,30 +141,32 @@ pane_readable() {  # <target>
     *) fm_backend_capture "$TASK_BACKEND" "$1" 1 "$EXPECTED_LABEL" >/dev/null 2>&1 ;;
   esac
 }
-# crew_pane_is_busy: the busy-signature fallback, backend-aware the same way -
-# fm_backend_busy_state's native semantic state (herdr's agent.get) when
-# available, else the shared tmux pane-regex reader (fm_pane_is_busy,
-# bin/fm-tmux-lib.sh) unchanged for tmux/unknown.
+# crew_pane_is_busy: the busy-signature fallback, backend-aware. Prefers
+# fm_backend_busy_state's native semantic state (herdr's agent.get) and falls
+# back to the shared tmux pane-regex reader (fm_pane_is_busy, bin/fm-tmux-lib.sh)
+# for tmux.
 #
-# `busy` alone is trusted outright. Both `idle` and unknown/unparseable fall
-# through to the shared tail-regex corroboration, NOT just unknown: herdr's
-# agent.get reports generation state ("working" while the model is streaming
-# a turn, "done"/"idle" once it is not - docs/herdr-backend.md "Busy state"),
-# which is a narrower signal than "this crew's turn/tool call is still in
-# progress". A crew blocked on its own long-running foreground tool call (e.g.
-# `no-mistakes axi run` without --yes, which blocks synchronously until a gate
-# or outcome - AGENTS.md section 7) is not generating for that whole span, so
-# agent.get can read idle/blocked (bin/backends/herdr.sh maps both to `idle`)
-# while the pane's own rendered text still shows the harness's busy banner
-# (BUSY_REGEX, e.g. "esc to interrupt") for the entire tool call, exactly like
-# tmux's regex-only reader would correctly report. Trusting herdr's `idle`
-# outright (skipping that corroboration) is what let a still-working crew read
-# as not-busy here, and - combined with a no-mistakes run-step lookup that also
-# missed attribution (see nm_runs_status_for_branch) - as not provably working in
-# fm-classify-lib.sh, triggering an immediate (non-wedge) stale wake instead of
-# the absorb-then-escalate path. A genuinely human-blocked agent (a permission
-# dialog, not mid-tool-call) does not render the busy banner, so this
-# corroboration does not mask that case: it stays correctly not-busy.
+# `busy` (herdr `working`) is trusted outright. A native `idle` is trusted - and
+# the tail-regex corroboration skipped - ONLY when the backend's read is
+# AUTHORITATIVE (fm_backend_native_status_authoritative: herdr + an omp pane under
+# full-lifecycle hook authority). There agent.get reports `working` for the whole
+# span of a long foreground tool call (e.g. `no-mistakes axi run` without --yes,
+# blocking until a gate or outcome - AGENTS.md section 7), so an idle verdict is
+# genuinely not-working; corroborating it against the pane text would only risk a
+# false `busy` off a stale "esc to interrupt" banner still in the scrollback.
+#
+# A NON-authoritative idle - a screen-scraped agent.get (herdr still doing its own
+# detection), or any unknown/unparseable verdict - still falls through to the
+# tail-regex corroboration. That is the pre-R1' behavior and why it exists: a
+# scraped agent.get reports generation state ("working" only while streaming,
+# "idle"/"done" once not - docs/herdr-backend.md "Busy state"), a narrower signal
+# than "this crew's turn/tool call is still running", so a crew mid-tool could read
+# idle while its pane still shows the busy banner. Trusting that scraped idle
+# outright once let a still-working crew read not-busy (and, with a missed
+# no-mistakes run-step attribution, not provably working in fm-classify-lib.sh),
+# firing an immediate non-wedge stale wake. A genuinely human-blocked agent (a
+# permission dialog, not mid-tool) does not render the busy banner, so the
+# corroboration stays correctly not-busy for that case.
 crew_pane_is_busy() {  # <target>
   case "$TASK_BACKEND" in
     tmux) fm_pane_is_busy "$1" ;;
@@ -173,12 +175,14 @@ crew_pane_is_busy() {  # <target>
       bs=$(fm_backend_busy_state "$TASK_BACKEND" "$1" 2>/dev/null)
       case "$bs" in
         busy) return 0 ;;
-        *)
-          tail40=$(fm_backend_capture "$TASK_BACKEND" "$1" 40 "$EXPECTED_LABEL" 2>/dev/null) || return 1
-          printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
-            | grep -qiE "${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}"
-          ;;
       esac
+      # R1': trust an authoritative native idle and skip the corroboration below.
+      if [ "$bs" = idle ] && fm_backend_native_status_authoritative "$TASK_BACKEND" "$1"; then
+        return 1
+      fi
+      tail40=$(fm_backend_capture "$TASK_BACKEND" "$1" 40 "$EXPECTED_LABEL" 2>/dev/null) || return 1
+      printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
+        | grep -qiE "${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}"
       ;;
   esac
 }

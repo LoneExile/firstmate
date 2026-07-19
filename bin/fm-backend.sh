@@ -613,6 +613,23 @@ fm_backend_busy_state() {  # <backend> <target>
   esac
 }
 
+# fm_backend_native_status_authoritative: 0 if the backend's native agent-state
+# read is AUTHORITATIVE for <target> (not a screen-scrape guess), so a native
+# idle/done verdict can be trusted without pane-regex corroboration. Only herdr
+# with an agent under full-lifecycle hook authority answers yes; every other
+# backend - tmux, or a herdr agent herdr still screen-detects - answers no, so the
+# caller (fm-crew-state.sh) keeps its heuristic fallback. Consumed only on the
+# native `idle` branch, never in the hot poll loops.
+fm_backend_native_status_authoritative() {  # <backend> <target>
+  local backend=$1
+  shift
+  fm_backend_source "$backend" || return 1
+  case "$backend" in
+    herdr) fm_backend_herdr_native_status_authoritative "$@" ;;
+    *) return 1 ;;
+  esac
+}
+
 # fm_backend_composer_state: classify the composer/input row of <target> as
 # empty|pending|unknown for callers that need a pre-submit pending-input guard
 # or an adapter's conservative submit fallback. It is exposed generically so a
