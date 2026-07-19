@@ -83,6 +83,13 @@ fi
 
 resultdir=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-$$.XXXXXX")
 trap 'rm -rf "$resultdir"' EXIT
+# Hermetic treehouse config: point treehouse at an empty user-config file so a
+# developer's global ~/.config/treehouse post_create hooks never run in the suite
+# (requires treehouse >= v2.0.2's TREEHOUSE_CONFIG override). $HOME is left real,
+# so herdr's live session state and git identity are untouched. Removed with
+# $resultdir on EXIT.
+empty_th_config="$resultdir/empty-treehouse-config.toml"
+: >"$empty_th_config"
 
 # run_one <test>: env-stripped, timed, output to a log, verdict+seconds to a
 # .result file. Backgrounded from the main shell so the test inherits the same
@@ -92,7 +99,7 @@ run_one() {
   local t=$1 name start end verdict
   name=$(basename "$t")
   start=$(date +%s)
-  if env -u OMPCODE -u CLAUDECODE -u HERDR_ENV -u TMUX \
+  if env -u OMPCODE -u CLAUDECODE -u HERDR_ENV -u TMUX TREEHOUSE_CONFIG="$empty_th_config" \
     timeout "$TIMEOUT" bash "$t" >"$resultdir/$name.log" 2>&1; then
     verdict=PASS
   else
