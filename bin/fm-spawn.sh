@@ -756,47 +756,38 @@ spawn_send_key() {  # <target> <key>
   esac
 }
 if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
-  spawn_send_text_line "$WT_TARGET" 'treehouse get'
-
-  # Wait for the treehouse subshell: the pane's cwd moves from the project to the worktree.
-  # Target the stable window id, not the name: if the name is ever lost (e.g. an
-  # automatic-rename slips through), display-message -t <bad-name> falls back to the
-  # active client's window, which would misread firstmate's OWN pane path as the
-  # worktree and tangle a hook into the primary checkout. The window id never lies.
-  # Compare against PROJ_ABS_REAL (physical), not PROJ_ABS: a symlinked project
-  # prefix would otherwise make the pane's OS-level cwd read differ from
-  # PROJ_ABS on the very first poll, before the pane has actually moved.
-  # Discover the worktree by polling the pane's foreground cwd until it SETTLES on
-  # a real slot. Accepting the first non-project cwd is unsafe: `treehouse get`
-  # transiently runs its foreground process from a different pool slot (the lowest,
-  # scanned first) before the subshell settles into the acquired slot, so the first
-  # read can misrecord the wrong slot (fm-spawn-worktree-misrecord, often slot 1).
-  # fm_worktree_discover_settled requires the same resolved root on two consecutive
-  # reads, so that one-shot startup transient can never win. See bin/fm-worktree-lib.sh.
-  _spawn_worktree_reader() { spawn_current_path "$WT_TARGET"; }
-  WT=$(fm_worktree_discover_settled _spawn_worktree_reader "$PROJ_ABS_REAL" 60 1) || WT=""
+  # Authoritative worktree acquisition (fix-spawn-slot-drift-under-load). Lease a pool
+  # slot directly instead of sending an interactive `treehouse get` to the pane and then
+  # inferring the slot from its foreground cwd. `treehouse get --lease` reserves the
+  # worktree, marks it leased in treehouse's persistent state (never re-handed-out by a
+  # later get and never pruned until `treehouse return`), and prints ONLY the acquired
+  # worktree's absolute path to stdout (banners to stderr). Recording that path is
+  # authoritative: the recorded slot can never be a transient wrong one (the old pane-cwd
+  # poll could catch treehouse's lowest-slot startup transient and misrecord slot 1), and
+  # two live crews can never co-locate (a leased slot is exclusive). AcquireLease runs the
+  # same post_create hooks as interactive get (submodule init), so submodule projects are
+  # unaffected. Mirrors fm-home-seed.sh's acquire_treehouse_home (secondmate homes lease
+  # the same way). Teardown returns the recorded worktree via `treehouse return --force`,
+  # which releases the lease.
+  WT=$(cd "$PROJ_ABS" && treehouse get --lease --lease-holder "$ID") || WT=""
   if [ -z "$WT" ]; then
-    echo "error: treehouse get did not enter a worktree within 60s; inspect window $T" >&2
+    echo "error: treehouse get --lease failed to lease a worktree for '$ID' (pool at $PROJ_ABS); inspect 'treehouse status'" >&2
     exit 1
   fi
-
-  validate_spawn_worktree "treehouse get" "$T"
-  # Slot-collision guard (fix-spawn-herdr-slot-drift): when a project the crew works
-  # on carries git submodules, treehouse's reset does not re-sync them, so a returned
-  # pooled slot stays dirty on the submodule gitlink and is never reused; the pool
-  # bloats and can eventually hand out a slot still in use by another live crew. That
-  # root cause is treehouse-side, but firstmate must never co-locate two crews in one
-  # worktree. Refuse when the resolved slot is already claimed by another task's meta -
-  # UNLESS that peer is confidently NOT a live crew. No crew-meta reaper runs outside
-  # teardown, so a crashed or partially-torn-down task leaves a stale meta behind and
-  # treehouse may legitimately reissue that slot; refusing on a stale meta would deadlock
-  # the worktree forever. A peer is bypassed only on a confident not-live signal: its
-  # backend endpoint is gone (fm_backend_target_exists fails - crashed-closed/torn-down),
-  # or its agent has exited to a bare shell (fm_backend_agent_alive = dead). An `unknown`
-  # verdict with a live endpoint (e.g. a running omp under bun, which cannot be attributed
-  # from outside its pane) KEEPS the refusal, so the guard never goes toothless for the
-  # actual harness. Mirrors bin/fm-bootstrap.sh's secondmate-liveness sweep: never license
-  # an action (here, a spawn refusal) from a non-confident reading.
+  validate_spawn_worktree "treehouse get --lease" "$T"
+  # Move the crew's pane into the leased worktree. We COMMAND the cwd deterministically
+  # (printf %q-quoted), rather than polling to discover where an interactive-get subshell
+  # landed - that inference was the slot-drift root cause.
+  spawn_send_text_line "$WT_TARGET" "cd $(printf '%q' "$WT")"
+  # Slot-collision backstop. With authoritative leasing (above) two live crews can no
+  # longer be handed the same slot - a leased worktree is never re-issued - so this guard
+  # can no longer fire from a treehouse reissue; it remains only as cheap defense-in-depth
+  # against a treehouse lease-bookkeeping regression. Refuse when the resolved slot is
+  # already recorded by another task's meta, UNLESS that peer is confidently NOT live (its
+  # backend endpoint is gone, or its agent has exited to a bare shell) - a stale meta from a
+  # crashed / partially-torn-down task must never deadlock the slot. An `unknown` verdict
+  # with a live endpoint KEEPS the refusal, so the guard never goes toothless for the actual
+  # harness. Mirrors bin/fm-bootstrap.sh's secondmate-liveness sweep.
   if [ -d "$STATE" ]; then
     for _other_meta in "$STATE"/*.meta; do
       [ -e "$_other_meta" ] || continue
