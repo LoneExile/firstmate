@@ -780,6 +780,62 @@ test_pid_identity_is_locale_invariant() {
   [ "$via_lc_time" = "$baseline" ] || fail "fm_pid_identity varied with exported LC_TIME (got '$via_lc_time', want '$baseline')"
   pass "fm_pid_identity is locale-invariant across LC_ALL/LC_TIME"
 }
+test_arm_ledger_records_started_wake_cycle() {
+  # The diagnostic cycle-exits ledger (#693 arm-layer cycle contract) appends one
+  # tab-separated record per observed cycle. A started child that wakes with an
+  # actionable check must leave an origin=started, reason=actionable-check row.
+  local dir state fakebin armout check_file cycle_log rc
+  dir=$(make_case arm-ledger-started)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  armout="$dir/arm.out"
+  cycle_log="$state/.watch-cycle-exits.log"
+  check_file="$state/task.check.sh"
+  mark_pr_check_migration_complete "$state"
+  cat > "$check_file" <<'SH'
+#!/usr/bin/env bash
+printf 'merged: https://example.test/pr/9\n'
+SH
+  chmod 0700 "$check_file"
+  FM_STATE_OVERRIDE="$state" "$ROOT/bin/fm-check-register.sh" task >/dev/null \
+    || fail "could not register ledger custom check"
+  rc=0
+  PATH="$fakebin:$PATH" FM_STATE_OVERRIDE="$state" FM_GUARD_GRACE=0 FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=0 FM_HEARTBEAT=999999 "$WATCH_ARM" > "$armout" || rc=$?
+  [ "$rc" -eq 0 ] || fail "arm returned non-zero for an immediate wake (status $rc): $(cat "$armout")"
+  [ -f "$cycle_log" ] || fail "arm did not write the cycle-exits ledger: $(cat "$armout")"
+  grep -q 'origin=started' "$cycle_log" || fail "ledger row missing origin=started: $(cat "$cycle_log")"
+  grep -q 'reason=actionable-check' "$cycle_log" || fail "ledger row missing actionable-check reason: $(cat "$cycle_log")"
+  grep -q 'successor=none' "$cycle_log" || fail "ledger row missing successor field: $(cat "$cycle_log")"
+  pass "arm cycle-exits ledger records a started + actionable-wake cycle"
+}
+
+test_arm_ledger_records_failed_cycle() {
+  # When no watcher can be confirmed (a child that never acquires the lock), the
+  # arm fails CLOSED with "no live watcher with a fresh beacon" (behavior
+  # unchanged) and the diagnostic ledger still records the cycle - a failed cycle
+  # must never be a silent gap in the forensic record.
+  local dir state fakebin fakewatch armout cycle_log rc
+  dir=$(make_case arm-ledger-failed)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  fakewatch="$dir/fake-fm-watch.sh"
+  armout="$dir/arm.out"
+  cycle_log="$state/.watch-cycle-exits.log"
+  mark_pr_check_migration_complete "$state"
+  cat > "$fakewatch" <<'SH'
+#!/usr/bin/env bash
+# Never acquires the lock or beats, so no watcher is ever confirmed: exit 0.
+exit 0
+SH
+  chmod +x "$fakewatch"
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_WATCH_OVERRIDE="$fakewatch" FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 FM_ARM_CONFIRM_TIMEOUT=1 FM_ARM_CONFIRM_MAX=2 "$WATCH_ARM" --restart > "$armout" || rc=$?
+  [ "$rc" -ne 0 ] || fail "arm did not fail closed when no watcher could be confirmed: $(cat "$armout")"
+  grep -qF 'watcher: FAILED - no live watcher with a fresh beacon' "$armout" || fail "arm did not print the never-confirmed FAILED line: $(cat "$armout")"
+  [ -f "$cycle_log" ] || fail "arm did not write the cycle-exits ledger for the failed cycle: $(cat "$armout")"
+  grep -q 'reason=confirmation-timeout' "$cycle_log" || fail "ledger row missing confirmation-timeout reason: $(cat "$cycle_log")"
+  pass "arm cycle-exits ledger records a failed (never-confirmed) cycle"
+}
 
 test_singleton_start
 test_pid_identity_is_locale_invariant
@@ -804,3 +860,5 @@ test_arm_propagates_immediate_wake_before_confirmation
 test_arm_waits_for_peer_beacon_after_child_stands_down
 test_arm_fails_loud_when_no_fresh_watcher_confirmable
 test_arm_waits_for_slow_starting_child_under_load
+test_arm_ledger_records_started_wake_cycle
+test_arm_ledger_records_failed_cycle

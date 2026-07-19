@@ -72,6 +72,158 @@ CONFIRM_MAX=${FM_ARM_CONFIRM_MAX:-60}
 [ "$CONFIRM_MAX" -ge "$CONFIRM_TIMEOUT" ] 2>/dev/null || CONFIRM_MAX=$CONFIRM_TIMEOUT
 # Poll interval while attached to an existing healthy watcher.
 ATTACH_POLL=${FM_ARM_ATTACH_POLL:-0.5}
+CYCLE_LOG="$STATE/.watch-cycle-exits.log"
+CYCLE_LOG_LOCK="$STATE/.watch-cycle-exits.lock"
+CYCLE_LOG_MAX_BYTES=${FM_WATCH_CYCLE_LOG_MAX_BYTES:-262144}
+CYCLE_LOG_KEEP_LINES=${FM_WATCH_CYCLE_LOG_KEEP_LINES:-1000}
+ARM_PID=${BASHPID:-$$}
+case "$CYCLE_LOG_MAX_BYTES" in ''|*[!0-9]*|0) CYCLE_LOG_MAX_BYTES=262144 ;; esac
+case "$CYCLE_LOG_KEEP_LINES" in ''|*[!0-9]*|0) CYCLE_LOG_KEEP_LINES=1000 ;; esac
+
+# --- Lifecycle ledger (diagnostic; #693 arm-layer cycle contract) --------------
+# One tab-separated record per observed watcher cycle, appended to
+# state/.watch-cycle-exits.log: arm/watcher pids, start/end timestamps, exit code
+# and signal, classified reason, beacon age, lock identity before and after close,
+# and successor disposition. This is diagnostic EVIDENCE, not a supervision
+# dependency: every write is bounded and best-effort (a capped lock-acquire spin,
+# 2>/dev/null, || true) so an observability failure can never stall or alter an
+# otherwise healthy cycle. It never touches state/.last-watcher-beat (only the
+# watcher does), and it leaves this script's control flow, exit codes, the
+# CONFIRM_MAX slow-start guard, and the attach/healthy semantics unchanged.
+cycle_clean_field() {
+  printf '%s' "$1" | tr '\t\r\n' '   ' | cut -c1-512
+}
+
+lock_snapshot() {
+  local pid identity
+  pid=$(cat "$WATCH_LOCK/pid" 2>/dev/null || true)
+  identity=$(cat "$WATCH_LOCK/pid-identity" 2>/dev/null || true)
+  printf 'pid:%s|identity:%s' "$(cycle_clean_field "${pid:-none}")" "$(cycle_clean_field "${identity:-none}")"
+}
+
+cycle_active=0
+cycle_watcher_pid=none
+cycle_origin=unknown
+cycle_started_at=0
+cycle_lock_before='pid:none|identity:none'
+
+cycle_begin() {
+  cycle_watcher_pid=$1
+  cycle_origin=$2
+  cycle_started_at=$(date +%s)
+  cycle_lock_before=$(lock_snapshot)
+  cycle_active=1
+}
+
+cycle_refresh_lock_before() {
+  [ "$cycle_active" -eq 1 ] || return 0
+  cycle_lock_before=$(lock_snapshot)
+}
+
+cycle_signal_name() {
+  local rc=$1 signal_number
+  case "$rc" in
+    ''|*[!0-9]*) printf 'unknown'; return ;;
+  esac
+  [ "$rc" -gt 128 ] || { printf 'none'; return; }
+  signal_number=$((rc - 128))
+  kill -l "$signal_number" 2>/dev/null || printf '%s' "$signal_number"
+}
+
+cycle_log_append() {
+  local exit_code=$1 signal=$2 reason=$3 successor=$4 ended_at beacon_age lock_after size tmp raw i
+  [ "$cycle_active" -eq 1 ] || return 0
+  ended_at=$(date +%s)
+  beacon_age=$(fm_path_age "$BEAT")
+  lock_after=$(lock_snapshot)
+
+  i=0
+  while ! fm_lock_try_acquire "$CYCLE_LOG_LOCK"; do
+    [ "$i" -lt 20 ] || return 0
+    sleep 0.02
+    i=$((i + 1))
+  done
+  printf 'arm_pid=%s\twatcher_pid=%s\torigin=%s\tstarted_at=%s\tended_at=%s\texit_code=%s\tsignal=%s\treason=%s\tbeacon_age=%s\tlock_before=%s\tlock_after=%s\tsuccessor=%s\n' \
+    "$ARM_PID" \
+    "$(cycle_clean_field "$cycle_watcher_pid")" \
+    "$(cycle_clean_field "$cycle_origin")" \
+    "$cycle_started_at" \
+    "$ended_at" \
+    "$(cycle_clean_field "$exit_code")" \
+    "$(cycle_clean_field "$signal")" \
+    "$(cycle_clean_field "$reason")" \
+    "$beacon_age" \
+    "$(cycle_clean_field "$cycle_lock_before")" \
+    "$(cycle_clean_field "$lock_after")" \
+    "$(cycle_clean_field "$successor")" >> "$CYCLE_LOG" 2>/dev/null || true
+
+  size=$(wc -c < "$CYCLE_LOG" 2>/dev/null | tr -d '[:space:]')
+  case "$size" in
+    ''|*[!0-9]*) ;;
+    *)
+      if [ "$size" -ge "$CYCLE_LOG_MAX_BYTES" ]; then
+        tmp="$CYCLE_LOG.tmp.$ARM_PID"
+        raw="$tmp.raw"
+        tail -n "$CYCLE_LOG_KEEP_LINES" "$CYCLE_LOG" 2>/dev/null \
+          | tail -c "$CYCLE_LOG_MAX_BYTES" > "$raw" 2>/dev/null \
+          && awk 'NR > 1 || /^arm_pid=/' "$raw" > "$tmp" 2>/dev/null \
+          && mv -f "$tmp" "$CYCLE_LOG" 2>/dev/null
+        rm -f "$tmp" "$raw" 2>/dev/null || true
+      fi
+      ;;
+  esac
+  fm_lock_release "$CYCLE_LOG_LOCK"
+  cycle_active=0
+}
+
+# A persistent adapter passes the arm pid that just closed (FM_WATCH_PREDECESSOR_ARM_PID).
+# Once this new arm verifies its watcher, update that predecessor's final record in
+# place so the one-record-per-cycle ledger captures the actual successor outcome.
+cycle_mark_predecessor_successor() {
+  local successor=$1 predecessor=${FM_WATCH_PREDECESSOR_ARM_PID:-} i tmp
+  case "$predecessor" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  [ -f "$CYCLE_LOG" ] || return 0
+  i=0
+  while ! fm_lock_try_acquire "$CYCLE_LOG_LOCK"; do
+    [ "$i" -lt 20 ] || return 0
+    sleep 0.02
+    i=$((i + 1))
+  done
+  tmp="$CYCLE_LOG.link.$ARM_PID"
+  awk -v target="arm_pid=$predecessor" -v replacement="successor=$(cycle_clean_field "$successor")" '
+    {
+      lines[NR] = $0
+      count = split($0, fields, "\t")
+      if (fields[1] == target) {
+        for (i = 1; i <= count; i += 1) {
+          if (fields[i] == "successor=none") last = NR
+        }
+      }
+    }
+    END {
+      for (i = 1; i <= NR; i += 1) {
+        if (i == last) sub(/\tsuccessor=none$/, "\t" replacement, lines[i])
+        print lines[i]
+      }
+    }
+  ' "$CYCLE_LOG" > "$tmp" 2>/dev/null && mv -f "$tmp" "$CYCLE_LOG" 2>/dev/null
+  rm -f "$tmp" 2>/dev/null || true
+  fm_lock_release "$CYCLE_LOG_LOCK"
+}
+
+watch_output_reason_type() {
+  local out=$1 line
+  line=$(grep -E '^(signal:|stale:|check:|heartbeat($|:))' "$out" 2>/dev/null | head -1 || true)
+  case "$line" in
+    signal:*) printf 'actionable-signal' ;;
+    stale:*) printf 'actionable-stale' ;;
+    check:*) printf 'actionable-check' ;;
+    heartbeat*) printf 'actionable-heartbeat' ;;
+    *) printf 'none' ;;
+  esac
+}
 
 clear_stale_recorded_watcher_lock() {
   local lock_home lock_path lock_identity
@@ -117,13 +269,16 @@ attach_and_wait() {
   while :; do
     if healthy_watcher; then
       if [ "$HEALTHY_PID" != "$attached_pid" ]; then
+        cycle_log_append unknown unknown lock-replaced "attached:$HEALTHY_PID"
         attached_pid=$HEALTHY_PID
         report_attached
+        cycle_begin "$attached_pid" attached
       fi
       sleep "$ATTACH_POLL"
       continue
     fi
     # Attached cycle ended (pid gone, identity mismatch, or beacon no longer fresh).
+    cycle_log_append unknown unknown attached-cycle-ended none
     exit 0
   done
 }
@@ -170,7 +325,9 @@ fi
 # then, not as an immediate empty wake. (--restart skips this: it just stopped
 # this home's watcher and wants a fresh one.)
 if [ "$mode" = arm ] && healthy_watcher; then
+  cycle_mark_predecessor_successor "attached:$HEALTHY_PID"
   report_attached
+  cycle_begin "$HEALTHY_PID" attached
   attach_and_wait "$HEALTHY_PID"
 fi
 
@@ -197,7 +354,9 @@ child_out=$(mktemp "$STATE/.watch-arm-output.XXXXXX") || {
 }
 "$WATCH" >"$child_out" &
 child=$!
+cycle_begin "$child" started
 child_done=0
+ended_rc=
 
 # Verify the outcome: poll until this child is the confirmed healthy watcher, or
 # until some other watcher legitimately holds the singleton (a startup race), or
@@ -207,25 +366,42 @@ hard_deadline=$(( $(date +%s) + CONFIRM_MAX ))
 while :; do
   if healthy_watcher; then
     if [ "$HEALTHY_PID" = "$child" ]; then
+      cycle_refresh_lock_before
+      cycle_mark_predecessor_successor "started:$child"
       echo "watcher: started pid=$child (beacon fresh)"
       wait "$child"
       rc=$?
+      cycle_log_append "$rc" "$(cycle_signal_name "$rc")" "$(watch_output_reason_type "$child_out")" none
       print_watch_output "$child_out"
       rm -f "$child_out" 2>/dev/null || true
       exit "$rc"
     fi
-    # Another watcher won the singleton; our child stood down.
+    # Another watcher holds the singleton. Record how OUR child's cycle ended -
+    # a live startup-race stand-down vs. a child that had already exited (crash or
+    # empty) - so the ledger never labels a crashed child as a clean stand-down.
+    if [ "$child_done" -ne 1 ]; then
+      wait "$child" 2>/dev/null
+      ended_rc=$?
+      child_done=1
+    fi
+    won_signal=$(cycle_signal_name "$ended_rc")
+    if [ "$ended_rc" = 0 ]; then
+      won_reason=singleton-stood-down
+    else
+      won_reason=cycle-ended-successor-found
+    fi
     if [ "$mode" = arm ]; then
+      cycle_log_append "$ended_rc" "$won_signal" "$won_reason" "attached:$HEALTHY_PID"
       report_attached
-      wait "$child" 2>/dev/null || true
       rm -f "$child_out" 2>/dev/null || true
       child=
       child_out=
       trap - HUP TERM INT
+      cycle_begin "$HEALTHY_PID" attached
       attach_and_wait "$HEALTHY_PID"
     fi
+    cycle_log_append "$ended_rc" "$won_signal" "$won_reason" "healthy:$HEALTHY_PID"
     report_healthy
-    wait "$child" 2>/dev/null || true
     rm -f "$child_out" 2>/dev/null || true
     exit 0
   fi
@@ -234,10 +410,12 @@ while :; do
     rc=$?
     child_done=1
     if [ "$rc" -eq 0 ] && watch_output_has_wake "$child_out"; then
+      cycle_log_append "$rc" "$(cycle_signal_name "$rc")" "$(watch_output_reason_type "$child_out")" none
       print_watch_output "$child_out"
       rm -f "$child_out" 2>/dev/null || true
       exit 0
     fi
+    ended_rc=$rc
   fi
   now=$(date +%s)
   if [ "$now" -ge "$deadline" ]; then
@@ -253,6 +431,7 @@ while :; do
 done
 
 trap - HUP TERM INT
+cycle_log_append unknown unknown confirmation-timeout none
 echo "watcher: FAILED - no live watcher with a fresh beacon"
 cleanup_child
 wait "$child" 2>/dev/null || true
