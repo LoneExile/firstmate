@@ -99,8 +99,9 @@ if [ "$(fm_pr_host "$URL")" = github ]; then
   if ! caller_has_merge_method "$@"; then
     merge_args=(--squash)
   fi
-  gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" ${merge_args[@]+"${merge_args[@]}"} "$@"
+  gh-axi pr merge "$PR_NUMBER" --repo "$PR_OWNER/$PR_REPO" "${merge_args[@]+"${merge_args[@]}"}" "$@"
 else
   WT=$(grep '^worktree=' "$META" | tail -1 | cut -d= -f2- || true)
   fm_pr_merge "$URL" "$(requested_method "$@")" "$WT"
 fi
+
