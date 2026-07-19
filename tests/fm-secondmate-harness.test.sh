@@ -377,9 +377,10 @@ meta_field() { grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2-; }
 # A tmux stub that behaves like make_noop_tmux but also captures the literal
 # `send-keys -l <cmd>` launch command into FM_FAKE_LAUNCH_LOG, mirroring the
 # capture technique in fm-spawn-dispatch-profile.test.sh so the constructed
-# launch command (not just meta) can be asserted on. Also answers the
-# `#{pane_current_path}` probe from FM_FAKE_PANE_PATH so this same stub works
-# for a crew/scout (non-secondmate) spawn's treehouse-worktree wait loop.
+# launch command (not just meta) can be asserted on. For a crew/scout
+# (non-secondmate) spawn, the paired fake treehouse below emits FM_FAKE_PANE_PATH
+# as the leased worktree path so validate_spawn_worktree runs against a path we
+# control (authoritative-lease model; secondmate spawns skip the lease block).
 make_launch_capturing_tmux() {
   local dir=$1 fakebin="$1/fakebin"
   mkdir -p "$fakebin"
@@ -409,6 +410,15 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  # get --lease prints the acquired worktree path to stdout; echo the test's
+  # controlled FM_FAKE_PANE_PATH (mirrors the fm-tangle-guard/fm-backend lease
+  # fakes from the authoritative-lease migration in 29bc820).
+  cat > "$fakebin/treehouse" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = get ]; then printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; fi
+exit 0
+SH
+  chmod +x "$fakebin/treehouse"
   printf '%s\n' "$fakebin"
 }
 
