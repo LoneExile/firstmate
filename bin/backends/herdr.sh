@@ -1286,10 +1286,11 @@ fm_backend_herdr_list_live() {  # <session>
 # docs/herdr-backend.md "Native pane.agent_status_changed push escalation").
 # fm_backend_herdr_wait_transition is the watcher's bounded wait primitive for
 # herdr homes: instead of a blind sleep, it blocks on herdr's native event
-# stream and returns the instant a subscribed pane transitions to `blocked`, so
-# a crew waiting on the human wakes its supervisor sub-second instead of after
-# the ~240s stale-pane wedge timer. Everything not `blocked` is streamed too
-# (the policy, not the subscription, makes `blocked` the sole immediate action)
+# stream and returns the instant a subscribed pane transitions to an actionable
+# state (`blocked`, or `done` = session ended), so a crew waiting on the human -
+# or one whose session just ended - wakes its supervisor sub-second instead of
+# after the ~240s stale-pane wedge timer (or the next poll). Everything else is
+# streamed too (the policy, not the subscription, picks the actionable statuses)
 # so `working` edges clear the per-pane dedupe marker. Polling stays the
 # permanent fail-closed backstop: below-capability, a connect/subscribe failure,
 # or a missing reader all fall back to the caller sleeping the same budget.
@@ -1370,7 +1371,7 @@ fm_backend_herdr_escalation_marker() {  # <state_dir> <window>
 
 # fm_backend_herdr_apply_transition: route one normalized record through the
 # shared policy table, maintaining the per-pane dedupe marker under <state_dir>.
-# On a fresh `actionable` (blocked) edge - policy actionable AND no marker yet -
+# On a fresh `actionable` (`blocked`/`done`) edge - policy actionable AND no marker yet -
 # it prints the record on stdout and returns 0 (the caller stops and hands the
 # record up). The caller commits the marker only after handling the record.
 # `absorb` (working) clears the marker and
@@ -1475,7 +1476,7 @@ fm_backend_herdr_wait_transition() {  # <session> <timeout_secs> <state_dir> <pa
     rc=2
   fi
 
-  # Level reconcile on (re)connect (report section 3d): a pane already `blocked`
+  # Level reconcile on (re)connect (report section 3d): a pane already `blocked`/`done`
   # during the gap since the last subscription is returned now, once, while
   # newer edges accumulate in the active stream. `working` panes clear their
   # marker here too.
@@ -1496,9 +1497,9 @@ fm_backend_herdr_wait_transition() {  # <session> <timeout_secs> <state_dir> <pa
     done
   fi
 
-  # Drain stream edges until a fresh blocked edge or the timeout. The reader is
+  # Drain stream edges until a fresh actionable edge or the timeout. The reader is
   # a subprocess of this call (NOT a second watcher), and is killed the instant
-  # a blocked edge is found.
+  # an actionable edge is found.
   # Split each raw projected line (pane_id\tworkspace_id\tagent_status\tagent)
   # with `cut`, NOT `IFS=$'\t' read`: a tab is IFS-whitespace, so `read` would
   # collapse an empty middle field (e.g. an absent workspace_id) and shift the

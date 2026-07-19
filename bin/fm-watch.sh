@@ -549,8 +549,9 @@ heartbeat_scan_finds_actionable() {
 # event_wait_or_sleep: the terminal wait of each supervision cycle. For a home
 # with push-capable windows (herdr), it replaces the blind `sleep POLL` with a
 # bounded wait on the backend's native transition stream, so a crew going
-# `blocked` wakes the supervisor sub-second instead of after the stale-pane
-# wedge timer. For every other home - no push-capable window, backend not
+# `blocked` (or reaching `done`) wakes the supervisor sub-second instead of
+# after the stale-pane wedge timer (`done` beats the next poll). For every
+# other home - no push-capable window, backend not
 # capable, or the event path proven unreliable this process - it sleeps POLL,
 # byte-for-byte today's behavior. The poll loop above still runs every cycle, so
 # this only ever SHORTENS latency; it can never drop an escalation (the poll
@@ -623,17 +624,17 @@ event_wait_or_sleep() {
   esac
 }
 
-# handle_push_transition: act on a fresh actionable (blocked) transition record
+# handle_push_transition: act on a fresh actionable (`blocked`/`done`) transition record
 # the backend returned. Maps the pane back to its window and task, applies the
 # declared-pause exemption (a crew waiting on a known external dependency is not
 # a surprise block - absorb it on the poll loop's long pause cadence instead),
 # and otherwise enqueues an immediate `stale` wake and wakes the supervisor. The
 # `stale` kind is deliberate: the supervisor's handler for it ("peek the pane to
-# diagnose") is exactly right for a blocked crew, and the drain/dedupe/guard
+# diagnose") is exactly right for a blocked or done crew, and the drain/dedupe/guard
 # machinery already understands it (queued by key=window, so a later poll-path
 # stale for the same pane collapses on drain).
 handle_push_transition() {  # <backend> <session> <record>
-  local backend=$1 session=$2 record=$3 pane_id to window task reason
+  local backend=$1 session=$2 record=$3 pane_id to window task reason cause
   pane_id=$(fm_transition_pane_id "$record")
   to=$(fm_transition_to_status "$record")
   [ -n "$pane_id" ] || { sleep 1; return; }
@@ -644,7 +645,12 @@ handle_push_transition() {  # <backend> <session> <record>
     fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
     return
   fi
-  reason="stale: $window (herdr: agent $to - waiting on human, escalated immediately, not via wedge timer)"
+  case "$to" in
+    blocked) cause="waiting on human" ;;
+    done)    cause="session ended, crew finished" ;;
+    *)       cause="state change" ;;
+  esac
+  reason="stale: $window (herdr: agent $to - $cause, escalated immediately, not via wedge timer)"
   fm_wake_append stale "$window" "$reason" || exit 1
   fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
   mark_surfaced "$STATE/$task.status"

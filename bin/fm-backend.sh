@@ -755,7 +755,7 @@ fm_backend_events_capable() {  # <backend> <session>
   esac
 }
 
-# fm_backend_wait_transition: bounded wait for a fresh actionable (blocked)
+# fm_backend_wait_transition: bounded wait for a fresh actionable (`blocked`/`done`)
 # transition on one of <pane_window...> in <session>, up to <timeout_secs>.
 # Prints the normalized transition record and returns 0 on a fresh actionable
 # edge; returns 1 on a clean timeout (the caller has effectively already slept);

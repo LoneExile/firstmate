@@ -56,6 +56,21 @@ grep -q 'herdr: agent blocked' "$STATE_DIR/.wake-queue" || fail "the stale paylo
 [ -e "$STATE_DIR/.herdr-escalated-default_wG_pQ" ] || fail "handle_push_transition must commit dedupe only after enqueue"
 pass "handle_push_transition: a blocked crew enqueues a stale wake naming its window and wakes the supervisor"
 
+# --- handle_push_transition: a done crew (session ended) also fast-escalates --
+
+reset_state
+fm_write_meta "$STATE_DIR/tk1.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
+handle_push_transition herdr default "$(mkrec wG:pQ "done")"
+[ -e "$STATE_DIR/.wake-queue" ] || fail "handle_push_transition should enqueue a wake for a done crew"
+grep -q 'default:wG:pQ' "$STATE_DIR/.wake-queue" || fail "the done wake must name the crew's window"
+grep -q 'herdr: agent done' "$STATE_DIR/.wake-queue" || fail "the done payload must name the herdr-done cause: $(cat "$STATE_DIR/.wake-queue")"
+if grep -q 'waiting on human' "$STATE_DIR/.wake-queue"; then
+  fail "a done wake must NOT be mislabeled 'waiting on human': $(cat "$STATE_DIR/.wake-queue")"
+fi
+[ -s "$WAKE_LOG" ] || fail "handle_push_transition must wake the supervisor for a done crew"
+[ -e "$STATE_DIR/.herdr-escalated-default_wG_pQ" ] || fail "a done edge must commit dedupe after enqueue so it fires once"
+pass "handle_push_transition: a done crew enqueues a window-named wake (not 'waiting on human') and wakes the supervisor"
+
 reset_state
 fm_write_meta "$STATE_DIR/tk1.meta" "window=default:wG:pQ" "backend=herdr" "kind=ship"
 (

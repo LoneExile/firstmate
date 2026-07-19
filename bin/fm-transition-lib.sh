@@ -71,33 +71,43 @@ fm_transition_agent()        { fm_transition_field "$1" 5; }
 # Given a normalized `to_status`, print exactly one action token:
 #
 #   actionable - escalate to the supervisor IMMEDIATELY (a fresh edge here is a
-#                durable wake now). `blocked` is the only immediately-actionable
-#                status today: herdr reports it precisely when a harness is
-#                waiting on the human (a permission/trust dialog, an interactive
-#                menu, a wedged prompt) - the cases that write no status file
-#                and otherwise sit until the stale-pane wedge timer.
+#                durable wake now), deduped per-pane so it fires once until a
+#                clearing edge. Two statuses are immediately actionable, both
+#                non-recurring so neither firehoses:
+#                  `blocked` - herdr reports it precisely when a harness is
+#                    waiting on the human (a permission/trust dialog, an
+#                    interactive menu, a wedged prompt); it writes no status
+#                    file and would otherwise sit until the stale-pane wedge
+#                    timer.
+#                  `done` - the agent session ended (crew finished, pane now a
+#                    husk); the supervisor wakes to verify landed work and tear
+#                    down, sub-second instead of on the next poll. Terminal, not
+#                    a per-turn blip: an at-rest but alive omp reads `idle`, not
+#                    `done` (verified live 2026-07-19).
 #   absorb     - do NOT wake, but CLEAR this pane's per-pane escalation dedupe
 #                marker so a later `->blocked` edge re-escalates. `working`
 #                (a crew resumed/started a turn) is the clearing edge.
 #   defer      - do NOTHING on the fast path; leave it to the existing
 #                status/turn-end completion semantics and the poll backstop.
-#                `idle`/`done` blip transiently between tool calls, so
-#                fast-pathing them would be a false-positive firehose - they are
-#                already covered by the debounced signal/stale machinery.
+#                `idle` recurs at every turn boundary (an autonomous crew rests
+#                between turns), so fast-pathing it would wake per-turn - a
+#                false-positive firehose already covered by the debounced
+#                signal/stale machinery. Promoting `idle` too needs a
+#                classify-absorb pass plus a per-pane omp-hook-authority gate.
 #   fallback   - the status is unknown/unrecognized: fall back to polling for
 #                this pane (the permanent fail-closed backstop), taking no fast
 #                action from an ambiguous read.
 #
-# Consumers act on `actionable`, mutate dedupe state on `absorb`, and ignore
-# `defer`/`fallback` on the fast path. Subscribing to ALL statuses (not just
-# `blocked`) is deliberate: `working`/`idle`/`done` carry the dedupe-clear and
-# reconnect/level-reconcile state; only THIS policy makes `blocked` the sole
-# immediate action.
+#   Consumers act on `actionable`, mutate dedupe state on `absorb`, and ignore
+#   `defer`/`fallback` on the fast path. Subscribing to ALL statuses (not just
+#   the actionable ones) is deliberate: `working`/`idle` carry the dedupe-clear
+#   and reconnect/level-reconcile state; only THIS policy decides which statuses
+#   (`blocked`, `done`) are the immediate actions.
 fm_transition_policy() {  # <to_status> -> actionable|absorb|defer|fallback
   case "$1" in
-    blocked) printf 'actionable' ;;
+    blocked|done) printf 'actionable' ;;
     working) printf 'absorb' ;;
-    idle|done) printf 'defer' ;;
+    idle) printf 'defer' ;;
     *) printf 'fallback' ;;
   esac
 }

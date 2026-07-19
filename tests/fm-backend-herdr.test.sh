@@ -1866,6 +1866,22 @@ test_apply_transition_working_clears_marker() {
   pass "fm_backend_herdr_apply_transition: a working edge clears the marker so the next ->blocked re-escalates"
 }
 
+test_apply_transition_done_is_actionable() {
+  local dir state rec out rc marker
+  dir="$TMP_ROOT/apply-done"; state="$dir/state"; mkdir -p "$state"
+  rec=$(bash -c '. "$0/bin/fm-transition-lib.sh"; fm_transition_record wG:pQ wG "" done omp' "$ROOT")
+  marker="$state/.herdr-escalated-default_wG_pQ"
+  out=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_apply_transition "$1" "$2" "$3"' "$ROOT" "$state" default "$rec"); rc=$?
+  [ "$rc" = 0 ] || fail "a fresh done edge must return 0 (actionable: session ended), got $rc"
+  case "$out" in *done*) : ;; *) fail "apply_transition should print the record on a fresh done edge, got '$out'" ;; esac
+  [ ! -e "$marker" ] || fail "detecting a done edge must not commit its marker before durable handling"
+  bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_commit_transition "$1" "$2" "$3"' "$ROOT" "$state" default "$rec"
+  out=$(bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_apply_transition "$1" "$2" "$3"' "$ROOT" "$state" default "$rec"); rc=$?
+  [ "$rc" = 1 ] || fail "an already-marked done pane must return 1 (deduped), got $rc"
+  [ -z "$out" ] || fail "an already-marked done pane must print nothing, got '$out'"
+  pass "fm_backend_herdr_apply_transition: done is actionable (terminal session-end edge), deduped after commit"
+}
+
 test_clear_transition_removes_task_marker() {
   local dir state marker
   dir="$TMP_ROOT/clear-transition"; state="$dir/state"; mkdir -p "$state"
@@ -1880,14 +1896,14 @@ test_apply_transition_defer_and_fallback_are_noops() {
   local dir state marker rc s
   dir="$TMP_ROOT/apply-defer"; state="$dir/state"; mkdir -p "$state"
   marker="$state/.herdr-escalated-default_wG_pQ"
-  for s in idle "done" unknown ""; do
+  for s in idle unknown ""; do
     local rec
     rec=$(bash -c '. "$0/bin/fm-transition-lib.sh"; fm_transition_record wG:pQ wG "" "$1" claude' "$ROOT" "$s")
     bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_apply_transition "$1" "$2" "$3"' "$ROOT" "$state" default "$rec"; rc=$?
     [ "$rc" = 1 ] || fail "defer/fallback status '$s' must return 1 (no fast action), got $rc"
     [ ! -e "$marker" ] || fail "defer/fallback status '$s' must not touch the escalation marker"
   done
-  pass "fm_backend_herdr_apply_transition: idle/done (defer) and unknown/empty (fallback) take no fast action"
+  pass "fm_backend_herdr_apply_transition: idle (defer) and unknown/empty (fallback) take no fast action"
 }
 
 test_wait_transition_no_panes_returns_2() {
@@ -2229,6 +2245,7 @@ test_normalize_event_leaves_from_empty
 test_escalation_marker_keys_like_watcher
 test_apply_transition_blocked_requires_commit_to_dedupe
 test_apply_transition_working_clears_marker
+test_apply_transition_done_is_actionable
 test_clear_transition_removes_task_marker
 test_apply_transition_defer_and_fallback_are_noops
 test_wait_transition_no_panes_returns_2
