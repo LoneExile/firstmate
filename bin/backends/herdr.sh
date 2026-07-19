@@ -382,8 +382,110 @@ fm_backend_herdr_container_ensure() {  # <cwd-for-a-fresh-workspace>
 #              change as "the pane exists"). The caller must fail safe toward
 #              refusal here, never toward closing - this is the conservative
 #              backstop the husk check depends on.
+# --- session.snapshot (atomic model bootstrap) --------------------------------
+#
+# herdr api snapshot returns the whole session model in one call (workspaces,
+# tabs, panes, agents). Used by session-start recovery (fm-bootstrap
+# secondmate_liveness_sweep) so N per-endpoint pane get + agent get probes
+# become one fetch + pure classify. The live model is a CACHE only - disk
+# journal stays truth (discuss/omp-herdr-native-api-leverage.md R3).
+#
+# Classification mirrors fm_backend_herdr_pane_agent_state's four states but
+# reads the snapshot shape:
+#   dead     - pane_id absent from snapshot.panes (gone / not in this session)
+#   no-agent - pane present, not listed in snapshot.agents with a registered
+#              agent_status (restored plain shell / husk)
+#   live     - pane listed under agents with working|idle|done|blocked
+#   unknown  - snapshot missing/unusable, or agent row with non-registered status
+#
+# Callers that did not load a snapshot keep today's per-call pane get + agent
+# get path unchanged (create_task husk checks, etc.).
+
+# JSON body of the last successful fm_backend_herdr_session_snapshot_load, or
+# empty when none is loaded / load failed. Session-scoped: a load for session A
+# must not answer classify for session B.
+FM_BACKEND_HERDR_SNAPSHOT_JSON=
+FM_BACKEND_HERDR_SNAPSHOT_SESSION=
+
+# fm_backend_herdr_session_snapshot_load: fetch herdr api snapshot for <session>
+# into FM_BACKEND_HERDR_SNAPSHOT_JSON. Returns 0 only when the body parses as a
+# session_snapshot with a panes array (agents may be empty). On any failure
+# clears the cache and returns 1 so callers fall back to per-endpoint probes.
+# Read-only; never mutates herdr state.
+fm_backend_herdr_session_snapshot_load() {  # <session>
+  local session=$1 out
+  FM_BACKEND_HERDR_SNAPSHOT_JSON=
+  FM_BACKEND_HERDR_SNAPSHOT_SESSION=
+  [ -n "$session" ] || return 1
+  out=$(fm_backend_herdr_cli "$session" api snapshot 2>/dev/null) || return 1
+  if ! printf '%s' "$out" | jq -e '
+      (.result.type == "session_snapshot")
+      and ((.result.snapshot.panes | type) == "array")
+    ' >/dev/null 2>&1; then
+    return 1
+  fi
+  FM_BACKEND_HERDR_SNAPSHOT_JSON=$out
+  FM_BACKEND_HERDR_SNAPSHOT_SESSION=$session
+  return 0
+}
+
+# fm_backend_herdr_session_snapshot_clear: drop any cached snapshot (tests /
+# end of a bootstrap sweep that should not leak into later calls).
+fm_backend_herdr_session_snapshot_clear() {
+  FM_BACKEND_HERDR_SNAPSHOT_JSON=
+  FM_BACKEND_HERDR_SNAPSHOT_SESSION=
+}
+
+# fm_backend_herdr_pane_agent_state_from_snapshot: pure classify of <pane_id>
+# against the cached snapshot for <session>. Prints dead|no-agent|live|unknown.
+# Returns 0 always when a matching cache exists; returns 1 (and prints nothing)
+# when there is no usable cache for this session so the caller can fall back.
+fm_backend_herdr_pane_agent_state_from_snapshot() {  # <session> <pane_id>
+  local session=$1 pane_id=$2 status
+  [ -n "$FM_BACKEND_HERDR_SNAPSHOT_JSON" ] || return 1
+  [ "$FM_BACKEND_HERDR_SNAPSHOT_SESSION" = "$session" ] || return 1
+  [ -n "$pane_id" ] || { printf 'unknown'; return 0; }
+
+  # Pane missing from the model -> dead (gone from this session).
+  if ! printf '%s' "$FM_BACKEND_HERDR_SNAPSHOT_JSON" | jq -e \
+    --arg p "$pane_id" \
+    '.result.snapshot.panes[]? | select(.pane_id == $p)' >/dev/null 2>&1; then
+    printf 'dead'
+    return 0
+  fi
+
+  # Prefer the agents[] roster (authoritative registered agents). A pane can
+  # appear in panes[] with agent_status "unknown" while absent from agents[].
+  status=$(printf '%s' "$FM_BACKEND_HERDR_SNAPSHOT_JSON" | jq -r \
+    --arg p "$pane_id" \
+    '.result.snapshot.agents[]? | select(.pane_id == $p) | .agent_status // empty' \
+    2>/dev/null | head -n1)
+  case "$status" in
+    working|idle|done|blocked)
+      printf 'live'
+      return 0
+      ;;
+    '')
+      # Pane exists, no agents[] row -> restored plain shell / no registered agent.
+      printf 'no-agent'
+      return 0
+      ;;
+    *)
+      printf 'unknown'
+      return 0
+      ;;
+  esac
+}
+
 fm_backend_herdr_pane_agent_state() {  # <session> <pane_id>
-  local session=$1 pane_id=$2 out code pid status
+  local session=$1 pane_id=$2 out code pid status snap_state
+  # Prefer a session-scoped snapshot cache when the caller loaded one (bootstrap
+  # liveness sweep). No cache -> unchanged per-call pane get + agent get path
+  # (create_task husk checks keep their existing fakebin call sequences).
+  if snap_state=$(fm_backend_herdr_pane_agent_state_from_snapshot "$session" "$pane_id"); then
+    printf '%s' "$snap_state"
+    return 0
+  fi
   # 2>&1, not 2>/dev/null: verified empirically that real herdr 0.7.1 writes
   # an error response's JSON body to STDERR (success bodies go to stdout), so
   # discarding stderr here would blind this function to exactly the

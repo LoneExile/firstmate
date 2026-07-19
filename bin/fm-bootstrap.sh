@@ -385,6 +385,13 @@ secondmate_liveness_sweep() {
   # explicitly out of scope here.
   [ -d "$STATE" ] || return 0
   local meta id window harness backend target verdict out
+  local session loaded_session=""
+  # herdr path: one session.snapshot per distinct session, then pure classify
+  # per meta (R3). Other backends / snapshot failure keep per-endpoint probes.
+  # Clear any leaked cache from a prior in-process source of herdr.sh.
+  if command -v fm_backend_herdr_session_snapshot_clear >/dev/null 2>&1; then
+    fm_backend_herdr_session_snapshot_clear
+  fi
   for meta in "$STATE"/*.meta; do
     [ -f "$meta" ] || continue
     grep -q '^kind=secondmate$' "$meta" 2>/dev/null || continue
@@ -395,6 +402,23 @@ secondmate_liveness_sweep() {
     backend=$(fm_backend_of_meta "$meta")
     target=$(fm_backend_target_of_meta "$meta")
     [ -n "$target" ] || target="$window"
+    if [ "$backend" = herdr ]; then
+      # Ensure adapter is loaded so snapshot helpers exist before the first
+      # agent_alive call (fm_backend_source is idempotent).
+      fm_backend_source herdr >/dev/null 2>&1 || true
+      if command -v fm_backend_herdr_session_snapshot_load >/dev/null 2>&1; then
+        session=${target%%:*}
+        if [ -n "$session" ] && [ "$session" != "$loaded_session" ]; then
+          # Always record the session as attempted so a failed load does not
+          # re-hammer api snapshot for every subsequent meta in the same session.
+          loaded_session=$session
+          if ! fm_backend_herdr_session_snapshot_load "$session" 2>/dev/null; then
+            # Leave cache empty so pane_agent_state falls back per endpoint.
+            fm_backend_herdr_session_snapshot_clear 2>/dev/null || true
+          fi
+        fi
+      fi
+    fi
     verdict=$(fm_backend_agent_alive "$backend" "$target" 2>/dev/null) || verdict="unknown"
     case "$harness" in
       omp) ;;
@@ -416,6 +440,9 @@ secondmate_liveness_sweep() {
         ;;
     esac
   done
+  if command -v fm_backend_herdr_session_snapshot_clear >/dev/null 2>&1; then
+    fm_backend_herdr_session_snapshot_clear
+  fi
   return 0
 }
 

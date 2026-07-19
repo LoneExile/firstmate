@@ -2037,6 +2037,106 @@ test_wait_transition_clean_timeout_returns_1() {
   pass "fm_backend_herdr_wait_transition: stock macOS Bash clean timeout closes fd 9 and returns 1"
 }
 
+# --- session.snapshot bootstrap classify (R3) --------------------------------
+#
+# One herdr api snapshot replaces N pane get + agent get probes for session-
+# start secondmate liveness. Classification must match pane_agent_state's four
+# states; with no cache loaded, pane_agent_state keeps the per-call path
+# (create_task husk tests above stay valid).
+
+test_snapshot_classify_live_no_agent_dead_and_session_scope() {
+  local dir fb out
+  dir="$TMP_ROOT/snap-classify"; mkdir -p "$dir"
+  fb=$(make_herdr_fakebin "$dir")
+  # Pure classify - no CLI calls. Inject a minimal session_snapshot body.
+  out=$(PATH="$fb:$PATH" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    FM_BACKEND_HERDR_SNAPSHOT_SESSION=fmtest
+    FM_BACKEND_HERDR_SNAPSHOT_JSON='"'"'{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{
+      "panes":[
+        {"pane_id":"w1:p1","tab_id":"w1:t1","agent_status":"unknown"},
+        {"pane_id":"w1:p2","tab_id":"w1:t2","agent_status":"working"}
+      ],
+      "agents":[
+        {"pane_id":"w1:p2","agent":"omp","agent_status":"working"}
+      ]
+    }}}'"'"'
+    printf "live=%s\n" "$(fm_backend_herdr_pane_agent_state_from_snapshot fmtest w1:p2)"
+    printf "noagent=%s\n" "$(fm_backend_herdr_pane_agent_state_from_snapshot fmtest w1:p1)"
+    printf "dead=%s\n" "$(fm_backend_herdr_pane_agent_state_from_snapshot fmtest w1:p99)"
+    # Wrong session must refuse cache (exit 1) so callers fall back.
+    if fm_backend_herdr_pane_agent_state_from_snapshot other w1:p2 >/dev/null; then
+      printf "scope=leak\n"
+    else
+      printf "scope=ok\n"
+    fi
+    # pane_agent_state uses cache when session matches
+    printf "via_state=%s\n" "$(fm_backend_herdr_pane_agent_state fmtest w1:p1)"
+    fm_backend_herdr_session_snapshot_clear
+    # After clear, from_snapshot must miss
+    if fm_backend_herdr_pane_agent_state_from_snapshot fmtest w1:p2 >/dev/null; then
+      printf "clear=leak\n"
+    else
+      printf "clear=ok\n"
+    fi
+  ' "$ROOT")
+  assert_contains "$out" "live=live" "working agents[] row must classify live"
+  assert_contains "$out" "noagent=no-agent" "pane without agents[] row must classify no-agent"
+  assert_contains "$out" "dead=dead" "pane absent from panes[] must classify dead"
+  assert_contains "$out" "scope=ok" "snapshot cache must not answer for a different session"
+  assert_contains "$out" "via_state=no-agent" "pane_agent_state must prefer snapshot cache when loaded"
+  assert_contains "$out" "clear=ok" "snapshot_clear must drop the cache"
+  pass "session.snapshot classify: live / no-agent / dead + session scope + clear"
+}
+
+test_snapshot_load_accepts_session_snapshot_and_rejects_garbage() {
+  local dir log resp fb rc out
+  dir="$TMP_ROOT/snap-load"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # 1: good snapshot
+  printf '%s\n' '{"id":"cli:api:snapshot","result":{"type":"session_snapshot","snapshot":{"panes":[{"pane_id":"w1:p1"}],"agents":[{"pane_id":"w1:p1","agent_status":"idle"}]}}}' \
+    > "$resp/1.out"
+  # 2: garbage body (missing type / panes)
+  printf '%s\n' '{"result":{"nope":true}}' > "$resp/2.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    if fm_backend_herdr_session_snapshot_load fmtest; then
+      printf "load1=ok state=%s\n" "$(fm_backend_herdr_pane_agent_state fmtest w1:p1)"
+    else
+      printf "load1=fail\n"
+    fi
+    if fm_backend_herdr_session_snapshot_load fmtest; then
+      printf "load2=ok\n"
+    else
+      printf "load2=fail cache_empty=%s\n" "$([ -z "$FM_BACKEND_HERDR_SNAPSHOT_JSON" ] && echo yes || echo no)"
+    fi
+  ' "$ROOT")
+  assert_contains "$out" "load1=ok state=live" "valid api snapshot must load and classify idle agent as live"
+  assert_contains "$out" "load2=fail cache_empty=yes" "invalid snapshot body must fail closed and clear cache"
+  assert_contains "$(cat "$log")" $'\x1f''api'$'\x1f''snapshot' "load must call herdr api snapshot"
+  pass "session.snapshot load: accepts session_snapshot, rejects garbage, clears on failure"
+}
+
+test_snapshot_load_missing_means_per_call_fallback() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/snap-fallback"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  # No snapshot cache. pane get + agent get as today.
+  printf '{"result":{"pane":{"pane_id":"w1:p2"}}}\n' > "$resp/1.out"
+  printf '{"result":{"agent":{"agent_status":"idle"}}}\n' > "$resp/2.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$(PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" bash -c '
+    . "$0/bin/backends/herdr.sh"
+    fm_backend_herdr_session_snapshot_clear
+    fm_backend_herdr_pane_agent_state fmtest w1:p2
+  ' "$ROOT")
+  [ "$out" = live ] || fail "without snapshot cache, pane_agent_state must use pane get + agent get, got '$out'"
+  assert_contains "$(cat "$log")" $'\x1f''pane'$'\x1f''get' "fallback must pane get"
+  assert_contains "$(cat "$log")" $'\x1f''agent'$'\x1f''get' "fallback must agent get"
+  assert_not_contains "$(cat "$log")" $'\x1f''api'$'\x1f''snapshot' "fallback must not call api snapshot"
+  pass "session.snapshot: empty cache keeps per-call pane_agent_state path"
+}
+
+
 # shellcheck source=bin/fm-backend.sh
 . "$ROOT/bin/fm-backend.sh"
 
@@ -2141,3 +2241,6 @@ test_wait_transition_stream_absorb_clears_then_timeout
 test_wait_transition_reader_failure_returns_2
 test_wait_transition_bad_ack_returns_2_and_cleans_up
 test_wait_transition_clean_timeout_returns_1
+test_snapshot_classify_live_no_agent_dead_and_session_scope
+test_snapshot_load_accepts_session_snapshot_and_rejects_garbage
+test_snapshot_load_missing_means_per_call_fallback
