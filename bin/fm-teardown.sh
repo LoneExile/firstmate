@@ -243,7 +243,12 @@ remove_pr_poll_artifacts() {
   validate_pr_poll_cleanup "$state_dir" "$id" || return 1
   rm -f "$state_dir/$id.check.sh" "$state_dir/$id.pr-poll" \
     "$state_dir/$id.pr-poll-registration" "$state_dir/$id.check-trust" || return 1
+  # The watcher's per-check fired-marker (bin/fm-watch.sh dedup of a
+  # terminal/monotonic verdict like a merged PR). Keyed by the check basename,
+  # which for a task PR/custom poll is the task id. Best-effort, firstmate-owned
+  # hidden state (like .seen-*), so it is not gated by validate_pr_poll_cleanup.
   if fm_task_id_path_safe "$id"; then
+    rm -f "$state_dir/.check-fired-$id" 2>/dev/null || true
     quarantine="$state_dir/.pr-check-quarantine"
     if [ -d "$quarantine" ] && [ ! -L "$quarantine" ]; then
       for artifact in "$quarantine/$id."*; do

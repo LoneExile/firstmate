@@ -759,10 +759,27 @@ while :; do
         fi
       fi
       if [ -n "$out" ]; then
-        reason="check: $c: $out"
-        fm_wake_append check "$c" "$reason" || exit 1
+        # Fire a check wake only when the verdict is NEW or CHANGED since the
+        # last fire for THIS check. A terminal/monotonic verdict (e.g. a merged
+        # PR) re-emits on every sweep until teardown removes the sidecars, so an
+        # intermediate merged PR - or any long-lived check whose task is not yet
+        # torn down - would otherwise wake the captain every CHECK_INTERVAL
+        # forever. The per-check fired-marker (keyed like .stale-/.seen-) holds
+        # the last-fired verdict and is cleared with the check's other artifacts
+        # at teardown. A genuinely different verdict (e.g. a fresh `x-mention
+        # <request_id>`) still differs from the marker and fires.
+        fired_marker="$STATE/.check-fired-$(basename "$c" .check.sh)"
+        prev_fired=""
+        if [ -f "$fired_marker" ] && [ ! -L "$fired_marker" ]; then
+          prev_fired=$(cat "$fired_marker" 2>/dev/null || true)
+        fi
         touch "$STATE/.last-check"
-        wake "$reason"
+        if [ "$out" != "$prev_fired" ]; then
+          reason="check: $c: $out"
+          fm_wake_append check "$c" "$reason" || exit 1
+          printf '%s' "$out" > "$fired_marker" || exit 1
+          wake "$reason"
+        fi
       fi
     done
     if [ -n "$rejected_checks" ]; then
