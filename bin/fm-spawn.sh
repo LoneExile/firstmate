@@ -184,6 +184,7 @@ if [ "$BACKEND" = orca ]; then
   fm_backend_orca_runtime_check || exit 1
 fi
 ORCA_ABORT_CLEANUP=0
+LEASE_RETURN_ON_ABORT=0
 ORCA_WORKTREE_ID=
 ORCA_TERMINAL=
 
@@ -204,8 +205,16 @@ parse_orca_worktree_result() {
   fi
 }
 
-orca_spawn_abort_cleanup() {
+spawn_abort_cleanup() {
   local status=$?
+  # Return a crew/scout treehouse lease if we abort AFTER acquiring it but BEFORE the meta is
+  # durably written: teardown reclaims the lease via the meta, so an abort in that window would
+  # otherwise leak a durable, never-pruned pool slot. Flag-gated + runs before the orca gate
+  # below (which early-returns for non-orca). Mirrors fm-home-seed.sh's seed_rollback.
+  if [ "${LEASE_RETURN_ON_ABORT:-0}" = 1 ] && [ -n "${WT:-}" ]; then
+    LEASE_RETURN_ON_ABORT=0
+    ( cd "$PROJ_ABS" && treehouse return --force "$WT" ) >/dev/null 2>&1 || true
+  fi
   [ "$ORCA_ABORT_CLEANUP" = 1 ] || return "$status"
   ORCA_ABORT_CLEANUP=0
   if [ -n "${ORCA_TERMINAL:-}" ]; then
@@ -235,7 +244,7 @@ orca_spawn_abort_cleanup() {
   fi
   return "$status"
 }
-trap orca_spawn_abort_cleanup EXIT
+trap spawn_abort_cleanup EXIT
 
 # Batch dispatch (see header): when the first positional is an `id=repo` pair, treat every
 # positional as one and spawn each by re-execing this script in single-task mode. We use
@@ -774,6 +783,9 @@ if [ "$KIND" != secondmate ] && [ "$BACKEND" != orca ]; then
     echo "error: treehouse get --lease failed to lease a worktree for '$ID' (pool at $PROJ_ABS); inspect 'treehouse status'" >&2
     exit 1
   fi
+  # Armed: until the meta is written, any abort (validate/collision exit, signal) must return
+  # the lease (see spawn_abort_cleanup). Teardown owns the lease once the meta exists.
+  LEASE_RETURN_ON_ABORT=1
   validate_spawn_worktree "treehouse get --lease" "$T"
   # Move the crew's pane into the leased worktree. We COMMAND the cwd deterministically
   # (printf %q-quoted), rather than polling to discover where an interactive-get subshell
@@ -910,6 +922,7 @@ META_WINDOW=$T
   fi
 } > "$STATE/$ID.meta"
 [ "$BACKEND" = orca ] && ORCA_ABORT_CLEANUP=0
+LEASE_RETURN_ON_ABORT=0  # meta written: teardown now owns the lease lifecycle
 
 sq_brief=$(shell_quote "$BRIEF")
 sq_turnend=$(shell_quote "$TURNEND")

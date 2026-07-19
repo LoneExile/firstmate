@@ -1157,6 +1157,44 @@ SH
   esac
   pass "fm-spawn.sh: records the authoritative leased worktree (treehouse get --lease stdout), never the pane cwd"
 }
+test_spawn_returns_lease_on_abort_before_meta() {
+  # Durable-lease safety: if fm-spawn leases a worktree then ABORTS before the meta is written
+  # (here validate rejects a non-isolated worktree), it MUST `treehouse return` the lease - else
+  # the slot leaks permanently (leases are never pruned) with no meta for teardown to reclaim it.
+  local proj badwt data id state config fb out rc retlog badwt_real
+  proj="$TMP_ROOT/leaserel-project"; badwt="$TMP_ROOT/leaserel-badwt"; data="$TMP_ROOT/leaserel-data"
+  id="leaserelz6"; retlog="$TMP_ROOT/leaserel-return.log"
+  fm_git_worktree "$proj" "$TMP_ROOT/leaserel-realwt" "fm/$id"
+  mkdir -p "$badwt"; : > "$retlog"
+  fb=$(make_spawn_fakebin "$TMP_ROOT/leaserel-fake" "$badwt")
+  # Override treehouse: lease the NON-isolated badwt (a plain dir -> validate rejects), and LOG
+  # every `return` call so we can assert the abort path released the lease.
+  cat > "$fb/treehouse" <<SH
+#!/usr/bin/env bash
+set -u
+case "\${1:-}" in
+  get) ( cd "$badwt" && pwd -P ) ;;
+  return) printf '%s\n' "\$*" >> "$retlog" ;;
+esac
+exit 0
+SH
+  chmod +x "$fb/treehouse"
+  mkdir -p "$data/$id"; printf 'brief\n' > "$data/$id/brief.md"
+  state="$TMP_ROOT/leaserel-state"; config="$TMP_ROOT/leaserel-config"; mkdir -p "$state" "$config"
+  out=$(PATH="$fb:$PATH" FM_ROOT_OVERRIDE="$ROOT" \
+    FM_STATE_OVERRIDE="$state" FM_DATA_OVERRIDE="$data" FM_CONFIG_OVERRIDE="$config" \
+    FM_PROJECTS_OVERRIDE="$TMP_ROOT/unused-projects" FM_SPAWN_NO_GUARD=1 TMUX="fake,1,0" \
+    FM_TMUX_LOG="$TMP_ROOT/leaserel.log" \
+    "$ROOT/bin/fm-spawn.sh" "$id" "$proj" omp 2>&1)
+  rc=$?
+  rm -rf "/tmp/fm-$id"
+  [ "$rc" -ne 0 ] || fail "spawn should abort on a non-isolated leased worktree"$'\n'"$out"
+  [ ! -f "$state/$id.meta" ] || fail "aborted spawn must not record a meta"$'\n'"$(cat "$state/$id.meta")"
+  badwt_real=$(cd "$badwt" && pwd -P)
+  assert_contains "$(cat "$retlog")" "return --force $badwt_real" \
+    "abort after lease must treehouse-return the leased worktree (else the slot leaks)"$'\n'"log:[$(cat "$retlog")]"
+  pass "fm-spawn.sh: returns the treehouse lease when it aborts before writing the meta (no leaked slot)"
+}
 
 
 test_backend_name_precedence
@@ -1189,3 +1227,4 @@ test_spawn_refuses_worktree_slot_collision
 test_spawn_allows_worktree_when_peer_meta_is_stale
 test_spawn_allows_worktree_when_peer_endpoint_gone
 test_spawn_records_leased_worktree_not_pane_cwd
+test_spawn_returns_lease_on_abort_before_meta
