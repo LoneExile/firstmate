@@ -154,11 +154,17 @@ send_prompt "Use the bash tool to run printf OMP_E2E_BASH_TWO. Then reply exactl
 wait_for_exact_line "BASH-TWO" || fail "second bash turn did not complete"
 
 : > "$HOME_DIR/state/omp-e2e.meta"
-send_prompt "Reply exactly GUARD-TRIGGER with no tools. When the guard follow-up arrives, use fm_watch_arm_omp and never use bash to arm supervision. After any FIRSTMATE WATCHER WAKE, run bin/fm-wake-drain.sh, read the signaled status, call fm_watch_arm_omp to re-arm, and finish exactly REARMED."
+send_prompt "Reply exactly GUARD-TRIGGER with no tools. When the guard follow-up arrives, use fm_watch_arm_omp and never use bash to arm supervision. After any FIRSTMATE WATCHER WAKE, run bin/fm-wake-drain.sh, read the signaled status, then call fm_watch_arm_omp again and finish exactly REARMED."
 wait_for_text "watcher: started OMP extension arm child 1" || fail "guard follow-up did not render the OMP watcher tool result"
 
 printf 'done: omp live e2e watcher fire\n' > "$HOME_DIR/state/omp-e2e.status"
-wait_for_text "watcher: started OMP extension arm child 2" 180 || fail "watcher wake did not drain and re-arm through the OMP tool"
+# Watcher continuity is extension-owned (#693): on the actionable close the
+# extension auto-arms the successor arm child *before* delivering the wake, so by
+# the time the model re-arms per the prompt, a live child already exists and the
+# tool reports it healthy rather than starting a new "child 2". Asserting that
+# "already has an arm child" line is the observable proof the successor was
+# restored ahead of the wake without a model re-arm step.
+wait_for_text "watcher: healthy - OMP extension already has an arm child" 180 || fail "extension-owned continuity did not auto-arm a successor before the wake"
 wait_for_exact_line "REARMED" 120 || fail "OMP did not settle after re-arming watcher supervision"
 
 pane=$(capture)
