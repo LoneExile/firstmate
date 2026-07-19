@@ -884,6 +884,78 @@ SH
   pass "arm fails loud (typed empty reason, non-zero) on a confirmed cycle that ended with no wake (#693 never a clean empty success)"
 }
 
+test_arm_fails_loud_on_nonzero_empty_confirmed_cycle() {
+  # #693 reason #2: a CONFIRMED watcher that exits NON-ZERO with no wake must print
+  # 'watcher cycle exited <rc> without an actionable reason' and propagate that rc
+  # (not the rc=0 'cycle ended' wording, and not the never-confirmed line).
+  local dir state fakebin fakewatch armout cycle_log rc
+  dir=$(make_case arm-nonzero-empty)
+  state="$dir/state"; fakebin="$dir/fakebin"; fakewatch="$dir/fake-fm-watch.sh"; armout="$dir/arm.out"
+  cycle_log="$state/.watch-cycle-exits.log"
+  mark_pr_check_migration_complete "$state"
+  cat > "$fakewatch" <<SH
+#!/usr/bin/env bash
+set -u
+. "$LIB"
+st="\$FM_HOME/state"; lock="\$st/.watch.lock"
+mkdir -p "\$lock" 2>/dev/null || true
+printf '%s\n' "\${BASHPID:-\$\$}" > "\$lock/pid"
+printf '%s\n' "\$FM_HOME" > "\$lock/fm-home"
+printf '%s\n' "\$FM_WATCH_OVERRIDE" > "\$lock/watcher-path"
+fm_pid_identity "\${BASHPID:-\$\$}" > "\$lock/pid-identity" 2>/dev/null || true
+i=0
+while [ "\$i" -lt 15 ]; do touch "\$st/.last-watcher-beat"; sleep 0.2; i=\$((i + 1)); done
+exit 3
+SH
+  chmod +x "$fakewatch"
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_WATCH_OVERRIDE="$fakewatch" \
+    FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_ARM_CONFIRM_TIMEOUT=5 FM_ARM_CONFIRM_MAX=20 "$WATCH_ARM" > "$armout" || rc=$?
+  [ "$rc" -eq 3 ] || fail "arm did not propagate the watcher's non-zero exit (got $rc): $(cat "$armout")"
+  grep -qF 'watcher: started pid=' "$armout" || fail "arm did not confirm the started watcher: $(cat "$armout")"
+  grep -qF 'watcher: FAILED - watcher cycle exited 3 without an actionable reason' "$armout" || fail "arm did not print the non-zero empty-cycle reason: $(cat "$armout")"
+  ! grep -qF 'cycle ended without an actionable reason' "$armout" || fail "arm used the rc=0 wording for a non-zero exit: $(cat "$armout")"
+  ! grep -qF 'no live watcher with a fresh beacon' "$armout" || fail "arm mislabeled a confirmed non-zero empty cycle as never-confirmed: $(cat "$armout")"
+  grep -q 'reason=empty-no-wake' "$cycle_log" || fail "ledger row missing empty-no-wake reason: $(cat "$cycle_log")"
+  pass "arm fails loud with the non-zero-exit reason and propagates rc on a confirmed empty cycle (#693 reason #2)"
+}
+
+test_arm_propagates_wake_on_nonzero_confirmed_cycle() {
+  # Guard for the wake-gate fix: a CONFIRMED watcher that printed a real wake but
+  # then exited NON-ZERO must have its wake propagated (not swallowed) and its rc
+  # preserved - the FAILED-empty path is for a cycle with NO wake only. Pre-fix the
+  # rc=0 gate dropped this wake as an empty cycle.
+  local dir state fakebin fakewatch armout rc
+  dir=$(make_case arm-nonzero-wake)
+  state="$dir/state"; fakebin="$dir/fakebin"; fakewatch="$dir/fake-fm-watch.sh"; armout="$dir/arm.out"
+  mark_pr_check_migration_complete "$state"
+  cat > "$fakewatch" <<SH
+#!/usr/bin/env bash
+set -u
+. "$LIB"
+st="\$FM_HOME/state"; lock="\$st/.watch.lock"
+mkdir -p "\$lock" 2>/dev/null || true
+printf '%s\n' "\${BASHPID:-\$\$}" > "\$lock/pid"
+printf '%s\n' "\$FM_HOME" > "\$lock/fm-home"
+printf '%s\n' "\$FM_WATCH_OVERRIDE" > "\$lock/watcher-path"
+fm_pid_identity "\${BASHPID:-\$\$}" > "\$lock/pid-identity" 2>/dev/null || true
+i=0
+while [ "\$i" -lt 15 ]; do touch "\$st/.last-watcher-beat"; sleep 0.2; i=\$((i + 1)); done
+printf 'signal: synthetic actionable wake\n'
+exit 3
+SH
+  chmod +x "$fakewatch"
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_WATCH_OVERRIDE="$fakewatch" \
+    FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_ARM_CONFIRM_TIMEOUT=5 FM_ARM_CONFIRM_MAX=20 "$WATCH_ARM" > "$armout" || rc=$?
+  [ "$rc" -eq 3 ] || fail "arm did not propagate the watcher's non-zero exit alongside its wake (got $rc): $(cat "$armout")"
+  grep -qF 'signal: synthetic actionable wake' "$armout" || fail "arm SWALLOWED a real wake that came with a non-zero exit: $(cat "$armout")"
+  ! grep -qF 'without an actionable reason' "$armout" || fail "arm mislabeled a cycle that DID carry a wake as empty: $(cat "$armout")"
+  pass "arm propagates a wake (and rc) on a confirmed cycle that printed a wake then exited non-zero (never swallows a wake)"
+}
+
 test_singleton_start
 test_pid_identity_is_locale_invariant
 test_stale_watch_lock_reclaimed
@@ -910,3 +982,5 @@ test_arm_waits_for_slow_starting_child_under_load
 test_arm_ledger_records_started_wake_cycle
 test_arm_ledger_records_failed_cycle
 test_arm_fails_loud_on_empty_confirmed_cycle
+test_arm_fails_loud_on_nonzero_empty_confirmed_cycle
+test_arm_propagates_wake_on_nonzero_confirmed_cycle

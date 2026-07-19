@@ -371,7 +371,10 @@ while :; do
       echo "watcher: started pid=$child (beacon fresh)"
       wait "$child"
       rc=$?
-      if [ "$rc" -eq 0 ] && watch_output_has_wake "$child_out"; then
+      if watch_output_has_wake "$child_out"; then
+        # A real actionable wake (any exit code) - propagate it and the child's rc
+        # unchanged, exactly as before. A nonzero rc that still carried a wake must
+        # NOT be swallowed as an empty cycle.
         cycle_log_append "$rc" "$(cycle_signal_name "$rc")" "$(watch_output_reason_type "$child_out")" none
         print_watch_output "$child_out"
         rm -f "$child_out" 2>/dev/null || true
