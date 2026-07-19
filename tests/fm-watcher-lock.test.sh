@@ -837,6 +837,53 @@ SH
   pass "arm cycle-exits ledger records a failed (never-confirmed) cycle"
 }
 
+test_arm_fails_loud_on_empty_confirmed_cycle() {
+  # #693 "never a clean empty success": a watcher we CONFIRMED healthy
+  # (HEALTHY_PID = child) whose cycle then ends rc=0 with no wake is a supervision
+  # lapse, not a clean exit. The arm must print the typed reason 'cycle ended
+  # without an actionable reason' and exit non-zero - NOT the never-confirmed 'no
+  # live watcher with a fresh beacon' line, and never a silent exit 0. Distinct
+  # from test_arm_ledger_records_failed_cycle, where the child never acquires the
+  # lock (never confirmed) - that path is deliberately left unchanged.
+  local dir state fakebin fakewatch armout cycle_log rc
+  dir=$(make_case arm-empty-confirmed)
+  state="$dir/state"
+  fakebin="$dir/fakebin"
+  fakewatch="$dir/fake-fm-watch.sh"
+  armout="$dir/arm.out"
+  cycle_log="$state/.watch-cycle-exits.log"
+  mark_pr_check_migration_complete "$state"
+  # Acquire the lock + beat like the real watcher so the arm confirms us healthy,
+  # keep beating long enough to be confirmed, then exit 0 with NO wake output.
+  cat > "$fakewatch" <<SH
+#!/usr/bin/env bash
+set -u
+. "$LIB"
+st="\$FM_HOME/state"
+lock="\$st/.watch.lock"
+mkdir -p "\$lock" 2>/dev/null || true
+printf '%s\n' "\${BASHPID:-\$\$}" > "\$lock/pid"
+printf '%s\n' "\$FM_HOME" > "\$lock/fm-home"
+printf '%s\n' "\$FM_WATCH_OVERRIDE" > "\$lock/watcher-path"
+fm_pid_identity "\${BASHPID:-\$\$}" > "\$lock/pid-identity" 2>/dev/null || true
+i=0
+while [ "\$i" -lt 15 ]; do touch "\$st/.last-watcher-beat"; sleep 0.2; i=\$((i + 1)); done
+exit 0
+SH
+  chmod +x "$fakewatch"
+  rc=0
+  PATH="$fakebin:$PATH" FM_HOME="$dir" FM_WATCH_OVERRIDE="$fakewatch" \
+    FM_POLL=5 FM_SIGNAL_GRACE=1 FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 \
+    FM_ARM_CONFIRM_TIMEOUT=5 FM_ARM_CONFIRM_MAX=20 "$WATCH_ARM" > "$armout" || rc=$?
+  [ "$rc" -ne 0 ] || fail "arm returned zero on an empty confirmed cycle (the clean empty success #693 forbids): $(cat "$armout")"
+  grep -qF 'watcher: started pid=' "$armout" || fail "arm did not confirm the started watcher before it ended empty: $(cat "$armout")"
+  grep -qF 'watcher: FAILED - cycle ended without an actionable reason' "$armout" || fail "arm did not print the typed empty-cycle FAILED reason: $(cat "$armout")"
+  ! grep -qF 'no live watcher with a fresh beacon' "$armout" || fail "arm mislabeled a confirmed empty cycle as never-confirmed: $(cat "$armout")"
+  [ -f "$cycle_log" ] || fail "arm did not write the ledger for the empty confirmed cycle: $(cat "$armout")"
+  grep -q 'reason=empty-no-wake' "$cycle_log" || fail "ledger row missing empty-no-wake reason: $(cat "$cycle_log")"
+  pass "arm fails loud (typed empty reason, non-zero) on a confirmed cycle that ended with no wake (#693 never a clean empty success)"
+}
+
 test_singleton_start
 test_pid_identity_is_locale_invariant
 test_stale_watch_lock_reclaimed
@@ -862,3 +909,4 @@ test_arm_fails_loud_when_no_fresh_watcher_confirmable
 test_arm_waits_for_slow_starting_child_under_load
 test_arm_ledger_records_started_wake_cycle
 test_arm_ledger_records_failed_cycle
+test_arm_fails_loud_on_empty_confirmed_cycle

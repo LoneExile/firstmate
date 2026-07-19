@@ -371,9 +371,26 @@ while :; do
       echo "watcher: started pid=$child (beacon fresh)"
       wait "$child"
       rc=$?
-      cycle_log_append "$rc" "$(cycle_signal_name "$rc")" "$(watch_output_reason_type "$child_out")" none
-      print_watch_output "$child_out"
+      if [ "$rc" -eq 0 ] && watch_output_has_wake "$child_out"; then
+        cycle_log_append "$rc" "$(cycle_signal_name "$rc")" "$(watch_output_reason_type "$child_out")" none
+        print_watch_output "$child_out"
+        rm -f "$child_out" 2>/dev/null || true
+        exit "$rc"
+      fi
+      # #693: a CONFIRMED watcher must never return a clean empty success. This
+      # child was verified healthy, then its cycle ended with no actionable wake -
+      # a supervision lapse, not a healthy exit. Name why and exit non-zero so the
+      # harness notify fires loud (mirrors the never-confirmed FAILED tail). Scoped
+      # to HEALTHY_PID = child; the never-confirmed and child-death paths keep their
+      # own "no live watcher with a fresh beacon" reason.
+      cycle_log_append "$rc" "$(cycle_signal_name "$rc")" empty-no-wake none
       rm -f "$child_out" 2>/dev/null || true
+      if [ "$rc" -eq 0 ]; then
+        echo "watcher: FAILED - cycle ended without an actionable reason"
+        rc=1
+      else
+        echo "watcher: FAILED - watcher cycle exited $rc without an actionable reason"
+      fi
       exit "$rc"
     fi
     # Another watcher holds the singleton. Record how OUR child's cycle ended -
