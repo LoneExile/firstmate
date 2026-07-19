@@ -74,6 +74,22 @@ Mark an axis not applicable only after inspecting its integration surface, and u
 For critical safety, routing, startup, and supervision infrastructure, prefer deterministic and idempotent enforcement over relying on agent memory alone.
 Keep instructions as the authority and discovery layer, but make repeated execution converge safely and make invalid or unsafe states fail closed wherever the runtime can enforce them.
 
+## External-binary / hot-path fixture gate
+
+When production gains or changes a call to an external binary on a hot path (`treehouse`, `tmux`, `gh`, backend CLIs, …) - new flag, new subcommand, or a path that previously did not shell out:
+
+1. Grep production callers of the new path.
+2. Grep `tests/**` for fakebin constructors and sanitized `PATH=` setups that exercise that path (including helpers under `tests/*-helpers.sh` and `tests/spawn-fakes.sh`).
+3. For each hit: update the shared fake helper, or document next to the case `N/A - this case skips <path>`.
+4. Prefer extending the shared area helper over a new inline heredoc.
+   Crew-spawn `treehouse get --lease` lives in `tests/spawn-fakes.sh` (`fm_fake_treehouse_lease`); secondmate home-lease lives in `tests/secondmate-helpers.sh`; wake/daemon fakes live in `tests/wake-helpers.sh`.
+5. Run every test file that constructs that fakebin (or sources the helper), not only the "obvious" subject file.
+   A file that mixes skip-path and hit-path cases can look green while one case is broken.
+6. If fixture updates are intentionally deferred, list them under `Fixture follow-ups:` in the commit body so the next session can find the debt.
+
+The 29bc820 lease migration updated three crew-spawn fakes and missed `fm-secondmate-harness`'s crew case because the lease fake was copy-pasted and secondmate cases in the same file skip the lease block.
+Shared ownership + this gate is the prevention.
+
 ## Repo style rules
 
 - Put one full sentence per line in tracked Markdown.
