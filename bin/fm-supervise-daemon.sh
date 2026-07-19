@@ -553,6 +553,14 @@ pane_is_busy() {  # <target> [backend]
   case "$bs" in
     busy) return 0 ;;
   esac
+  # R1' parity (away-mode): trust an authoritative native idle (an omp pane under
+  # hook authority) and skip the busy-banner corroboration - a stale
+  # 'esc to interrupt' footer must not read a done crew as still busy. Every
+  # non-authoritative read (scraped agent.get, unknown, tmux) keeps the regex
+  # fallback below. Mirrors fm-crew-state.sh crew_pane_is_busy.
+  if [ "$bs" = idle ] && fm_backend_native_status_authoritative "$backend" "$target"; then
+    return 1
+  fi
   tail40=$(fm_backend_capture "$backend" "$target" 40 2>/dev/null) || return 1
   printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
     | grep -qiE "${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}"
@@ -588,6 +596,11 @@ stale_window_is_busy() {  # <window> <state>
   case "$bs" in
     busy) return 0 ;;
   esac
+  # R1' parity: an authoritative native idle is trusted; a stale busy footer must
+  # not keep a done crew's stale marker alive (see pane_is_busy above).
+  if [ "$bs" = idle ] && fm_backend_native_status_authoritative "$backend" "$win"; then
+    return 1
+  fi
   printf '%s' "$tail40" | grep -v '^[[:space:]]*$' | tail -6 \
     | grep -qiE "${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}"
 }

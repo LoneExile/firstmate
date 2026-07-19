@@ -1543,6 +1543,58 @@ test_pane_is_busy_defaults_to_tmux_when_backend_omitted() {
   pass "pane_is_busy: omitted backend arg defaults to tmux (pre-existing callers unaffected)"
 }
 
+test_pane_is_busy_herdr_authoritative_idle_trusts_native() {
+  # R1' parity (away-mode daemon): an omp pane whose native idle is AUTHORITATIVE
+  # (hook authority) must be trusted as not-busy even when a stale 'esc to
+  # interrupt' banner lingers in the scrollback - the banner must NOT be read as
+  # still busy. Foil to test_pane_is_busy_herdr_idle_falls_back_to_capture_regex
+  # (same footer, but non-authoritative -> regex still fires).
+  (
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_capture() { printf 'esc to interrupt\n'; }
+    fm_backend_native_status_authoritative() {
+      [ "$1" = herdr ] && [ "$2" = "default:w1:p2" ] || fail "unexpected authority args: $1 $2"
+      return 0
+    }
+    if pane_is_busy "default:w1:p2" herdr; then
+      fail "pane_is_busy read an authoritative-idle omp pane as busy off a stale footer"
+    fi
+  ) || fail "herdr authoritative-idle pane_is_busy subshell failed"
+  pass "pane_is_busy: an authoritative native idle is trusted not-busy, ignoring a stale busy footer"
+}
+
+test_housekeeping_herdr_authoritative_idle_escalates_despite_footer() {
+  # R1' parity via the housekeeping stale-scan (stale_window_is_busy): a stale omp
+  # crew whose native idle is AUTHORITATIVE must be surfaced (escalated) even with
+  # a lingering 'esc to interrupt' footer - the mirror of
+  # test_housekeeping_herdr_idle_busy_footer_clears_stale (non-authoritative, where
+  # the footer correctly reads busy and the marker clears as resumed work).
+  local dir state key
+  dir=$(make_supercase stale-herdr-authoritative-idle)
+  state="$dir/state"
+  fm_write_meta "$state/herdr-auth.meta" "window=default:w1:p5" "backend=herdr"
+  printf 'working\n' > "$state/herdr-auth.status"
+  key=$(printf '%s' "herdr-auth" | tr ':/.' '___')
+  echo $(( $(date +%s) - 500 )) > "$state/.subsuper-stale-$key"
+  (
+    fm_backend_capture() { printf 'esc to interrupt\n'; }
+    fm_backend_busy_state() { printf 'idle'; }
+    fm_backend_native_status_authoritative() {
+      [ "$1" = herdr ] && [ "$2" = "default:w1:p5" ] || fail "unexpected authority args: $1 $2"
+      return 0
+    }
+    # Exercise the stubs directly (mirrors the sibling herdr housekeeping tests):
+    # a stub self-check that also marks them invoked for the linter.
+    fm_backend_capture herdr default:w1:p5 40 >/dev/null
+    [ "$(fm_backend_busy_state herdr default:w1:p5)" = idle ] || fail "busy stub did not report idle"
+    fm_backend_native_status_authoritative herdr default:w1:p5 || fail "authority stub did not report authoritative"
+    FM_STATE_OVERRIDE="$state" FM_STALE_ESCALATE_SECS=240 housekeeping "$state"
+  ) || fail "authoritative-idle housekeeping failed"
+  [ -s "$state/.subsuper-escalations" ] || fail "authoritative-idle stale crew was NOT escalated (footer masked it as busy)"
+  [ ! -e "$state/.subsuper-stale-$key" ] || fail "stale marker not cleared after escalation"
+  pass "housekeeping escalates an authoritative-idle stale crew despite a stale busy footer"
+}
+
 test_pane_input_pending_herdr_dispatch() {
   (
     fm_backend_composer_state() { [ "$1" = herdr ] && [ "$2" = "default:w1:p2" ] || fail "unexpected composer_state args: $1 $2"; printf 'pending'; }
@@ -1741,6 +1793,8 @@ test_discover_supervisor_target_herdr
 test_pane_is_busy_herdr_native_busy_state
 test_pane_is_busy_herdr_falls_back_to_capture_regex
 test_pane_is_busy_herdr_idle_falls_back_to_capture_regex
+test_pane_is_busy_herdr_authoritative_idle_trusts_native
+test_housekeeping_herdr_authoritative_idle_escalates_despite_footer
 test_pane_is_busy_defaults_to_tmux_when_backend_omitted
 test_pane_input_pending_herdr_dispatch
 test_inject_msg_herdr_busy_guard_defers
