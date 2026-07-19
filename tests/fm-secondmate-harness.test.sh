@@ -32,6 +32,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/spawn-fakes.sh
+. "$(dirname "${BASH_SOURCE[0]}")/spawn-fakes.sh"
 # shellcheck source=bin/fm-ff-lib.sh
 . "$ROOT/bin/fm-ff-lib.sh"
 # shellcheck source=bin/fm-config-inherit-lib.sh
@@ -378,7 +380,7 @@ meta_field() { grep "^$2=" "$1" 2>/dev/null | tail -1 | cut -d= -f2-; }
 # `send-keys -l <cmd>` launch command into FM_FAKE_LAUNCH_LOG, mirroring the
 # capture technique in fm-spawn-dispatch-profile.test.sh so the constructed
 # launch command (not just meta) can be asserted on. For a crew/scout
-# (non-secondmate) spawn, the paired fake treehouse below emits FM_FAKE_PANE_PATH
+# (non-secondmate) spawn, the paired fm_fake_treehouse_lease emits FM_FAKE_PANE_PATH
 # as the leased worktree path so validate_spawn_worktree runs against a path we
 # control (authoritative-lease model; secondmate spawns skip the lease block).
 make_launch_capturing_tmux() {
@@ -410,15 +412,8 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  # get --lease prints the acquired worktree path to stdout; echo the test's
-  # controlled FM_FAKE_PANE_PATH (mirrors the fm-tangle-guard/fm-backend lease
-  # fakes from the authoritative-lease migration in 29bc820).
-  cat > "$fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-if [ "${1:-}" = get ]; then printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; fi
-exit 0
-SH
-  chmod +x "$fakebin/treehouse"
+  # Shared crew-lease fake (authoritative-lease model; secondmate spawns skip the lease block).
+  fm_fake_treehouse_lease "$fakebin"
   printf '%s\n' "$fakebin"
 }
 

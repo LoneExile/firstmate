@@ -17,6 +17,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/spawn-fakes.sh
+. "$(dirname "${BASH_SOURCE[0]}")/spawn-fakes.sh"
 
 # shellcheck source=bin/fm-tangle-lib.sh
 . "$ROOT/bin/fm-tangle-lib.sh"
@@ -149,9 +151,9 @@ test_brief_assertion_precedes_branch() {
 
 # --- GUARD 1b: fm-spawn isolation abort -------------------------------------
 
-# A fake tmux that reports FM_FAKE_PANE_PATH as the post-`treehouse get` pane cwd
-# (so the spawn's worktree-resolution loop resolves to a path we control), names
-# the session on '#S', and swallows window ops. Echoes the fakebin dir.
+# A fake tmux that reports FM_FAKE_PANE_PATH for pane probes, names the session
+# on '#S', and swallows window ops, paired with the shared crew-lease treehouse
+# fake (fm_fake_treehouse_lease). Echoes the fakebin dir.
 make_spawn_fakebin() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
@@ -169,15 +171,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  cat > "$fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-set -u
-# get --lease prints the acquired worktree path to stdout; echo the test's controlled
-# FM_FAKE_PANE_PATH so validate_spawn_worktree runs against a path we chose.
-if [ "${1:-}" = get ]; then printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; fi
-exit 0
-SH
-  chmod +x "$fakebin/treehouse"
+  fm_fake_treehouse_lease "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
@@ -256,13 +250,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  cat > "$fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-set -u
-if [ "${1:-}" = get ]; then printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; fi
-exit 0
-SH
-  chmod +x "$fakebin/treehouse"
+  fm_fake_treehouse_lease "$fakebin"
   printf '%s\n' "$fakebin"
 }
 

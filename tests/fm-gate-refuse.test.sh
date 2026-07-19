@@ -29,6 +29,8 @@ set -u
 
 # shellcheck source=tests/lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
+# shellcheck source=tests/spawn-fakes.sh
+. "$(dirname "${BASH_SOURCE[0]}")/spawn-fakes.sh"
 
 GATE_LIB="$ROOT/bin/fm-gate-refuse-lib.sh"
 SPAWN="$ROOT/bin/fm-spawn.sh"
@@ -152,15 +154,7 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  cat > "$fakebin/treehouse" <<'SH'
-#!/usr/bin/env bash
-set -u
-# get --lease prints the acquired worktree path to stdout; echo the controlled
-# FM_FAKE_PANE_PATH so fm-spawn records it as the crew worktree.
-if [ "${1:-}" = get ]; then printf '%s\n' "${FM_FAKE_PANE_PATH:-}"; fi
-exit 0
-SH
-  chmod +x "$fakebin/treehouse"
+  fm_fake_treehouse_lease "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
