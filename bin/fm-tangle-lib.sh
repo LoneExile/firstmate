@@ -35,19 +35,42 @@ fm_default_branch() {
   return 1
 }
 
+# The branch the primary checkout at <dir> is EXPECTED to sit on. A fork whose
+# permanent working line is not the repo default (e.g. an omp-only fork that
+# lives on feat/omp-only) declares it via the FM_PRIMARY_BRANCH env or a
+# `config/primary-branch` file under <dir>; otherwise it is the repo default
+# branch. Echoes the name, or returns 1 when even the default can't be resolved.
+fm_expected_primary_branch() {
+  local dir=$1
+  local configured="" cfg="${FM_CONFIG_OVERRIDE:-$dir/config}"
+  if [ -n "${FM_PRIMARY_BRANCH:-}" ]; then
+    printf '%s\n' "$FM_PRIMARY_BRANCH"
+    return 0
+  fi
+  if [ -f "$cfg/primary-branch" ]; then
+    IFS= read -r configured < "$cfg/primary-branch" || true
+    configured=$(printf '%s' "$configured" | tr -d ' \t\r')
+  fi
+  if [ -n "$configured" ]; then
+    printf '%s\n' "$configured"
+    return 0
+  fi
+  fm_default_branch "$dir"
+}
+
 # If the git checkout at <root> is tangled - on a NAMED branch that is not its
-# default branch - echo the offending branch name and return 0. For every healthy
+# expected primary branch (see fm_expected_primary_branch) - echo the offending branch name and return 0. For every healthy
 # state (not a git work tree, detached HEAD, or already on the default branch)
 # echo nothing and return 1. Detached HEAD is how linked worktrees and secondmate
 # homes legitimately sit, so they never trip this; only a feature branch checked
 # out in a primary checkout does.
 fm_primary_tangle_branch() {
-  local root=$1 cur default
+  local root=$1 cur expected
   git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
   cur=$(git -C "$root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
   [ -n "$cur" ] || return 1
-  default=$(fm_default_branch "$root") || return 1
-  [ "$cur" = "$default" ] && return 1
+  expected=$(fm_expected_primary_branch "$root") || return 1
+  [ "$cur" = "$expected" ] && return 1
   printf '%s\n' "$cur"
   return 0
 }

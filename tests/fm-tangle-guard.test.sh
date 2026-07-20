@@ -302,9 +302,50 @@ test_spawn_tmux_window_construction() {
   pass "fm-spawn: appends windows by session-colon, pins the name, and targets the window id"
 }
 
+# --- declared primary branch (fork lives on a non-default branch) ------------
+
+# A fork whose permanent working line is not the repo default (e.g. this omp-only
+# fork on feat/omp-only) declares it via config/primary-branch or FM_PRIMARY_BRANCH,
+# so the guard stops false-alarming on its own branch - but still catches a real
+# tangle onto some OTHER branch.
+test_lib_declared_primary() {
+  local repo out
+  repo=$(make_repo "$TMP_ROOT/declared-primary-repo")
+  git -C "$repo" checkout -q -B feat/omp-only
+  out=$(fm_primary_tangle_branch "$repo" || true)
+  [ "$out" = "feat/omp-only" ] || fail "without a declared primary, a non-default branch must read as a tangle; got '$out'"
+  mkdir -p "$repo/config"; printf 'feat/omp-only\n' > "$repo/config/primary-branch"
+  out=$(fm_primary_tangle_branch "$repo" || true)
+  [ -z "$out" ] || fail "config/primary-branch did not silence the declared primary; got '$out'"
+  rm -f "$repo/config/primary-branch"
+  out=$(FM_PRIMARY_BRANCH=feat/omp-only fm_primary_tangle_branch "$repo" || true)
+  [ -z "$out" ] || fail "FM_PRIMARY_BRANCH did not silence the declared primary; got '$out'"
+  printf 'feat/omp-only\n' > "$repo/config/primary-branch"
+  git -C "$repo" checkout -q -B fm/stray
+  out=$(fm_primary_tangle_branch "$repo" || true)
+  [ "$out" = "fm/stray" ] || fail "a real tangle off the declared primary must still fire; got '$out'"
+  pass "fm_expected_primary_branch: a declared primary (config/env) silences its own branch but still catches a real tangle"
+}
+
+test_bootstrap_respects_declared_primary() {
+  local repo out
+  repo=$(make_repo "$TMP_ROOT/bootstrap-primary-repo")
+  git -C "$repo" checkout -q -B feat/omp-only
+  mkdir -p "$repo/config"; printf 'feat/omp-only\n' > "$repo/config/primary-branch"
+  out=$(run_bootstrap "$repo" | grep '^TANGLE:' || true)
+  [ -z "$out" ] || fail "bootstrap emitted a TANGLE line for the declared primary branch: $out"
+  git -C "$repo" checkout -q -B fm/tangle-dd4
+  out=$(run_bootstrap "$repo" | grep '^TANGLE:' || true)
+  assert_contains "$out" "fm/tangle-dd4" "bootstrap did not report a real tangle off the declared primary"
+  assert_contains "$out" "checkout feat/omp-only" "bootstrap restore remediation did not name the declared primary"
+  pass "fm-bootstrap: a declared primary silences its own TANGLE but still reports a real one, restoring to the declared primary"
+}
+
 test_lib_classification
 test_guard_banner
 test_bootstrap_line
 test_brief_assertion_precedes_branch
 test_spawn_isolation_abort
 test_spawn_tmux_window_construction
+test_lib_declared_primary
+test_bootstrap_respects_declared_primary
