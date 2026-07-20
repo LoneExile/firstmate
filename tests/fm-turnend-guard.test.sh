@@ -23,7 +23,7 @@ fm_git_identity fmtest fmtest@example.invalid
 # interactive omp session is active.
 unset OMPCODE CLAUDECODE
 
-REQUIRED_REASON='resume supervision with the OMP tool fm_watch_arm_omp'
+REQUIRED_REASON='repair a missing or failed watcher cycle with the OMP tool fm_watch_arm_omp'
 
 # --- PREDICATE: bin/fm-supervision-lib.sh -----------------------------------
 
@@ -552,7 +552,9 @@ test_omp_extension_forces_followup() {
   assert_contains "$content" 'sendUserMessage' "omp extension must force a follow-up turn"
   assert_contains "$content" 'deliverAs: "followUp"' "omp extension must queue the follow-up safely"
   assert_contains "$content" 'guardFollowupActive' "omp extension must carry a turn-boundary loop guard"
-  assert_contains "$content" 'session-start operating block' "omp extension must use harness-neutral repair wording"
+  assert_contains "$content" 'watcher cycle is missing, failed, or unhealthy' "omp extension must identify a blind turn as watcher recovery"
+  assert_contains "$content" 'harness recovery instruction below' "omp extension must delegate recovery action to the shared guard line"
+  assert_not_contains "$content" 'Resume supervision according to the session-start operating block' "omp extension must not route a blind turn through ordinary continuity"
   assert_contains "$content" '.omp-turnend-extension-loaded' "omp extension must write its loaded marker for session-start diagnostics"
   assert_contains "$content" 'lockOwnership' "omp extension loaded marker must respect the session lock"
   pass ".omp primary extension: turn_end forces one follow-up through the shared guard"
@@ -595,6 +597,8 @@ const pi = {
   async sendUserMessage(message, options) {
     prompts += 1;
     if (!message.includes("TURN WOULD END BLIND")) throw new Error(`unexpected prompt: ${message}`);
+    if (!message.includes("watcher cycle is missing, failed, or unhealthy")) throw new Error(`guard prompt omitted recovery-only state: ${message}`);
+    if (message.includes("Resume supervision according to the session-start operating block")) throw new Error(`guard prompt used ordinary continuity: ${message}`);
     if (options?.deliverAs !== "followUp") throw new Error("guard prompt was not a follow-up");
   },
 };

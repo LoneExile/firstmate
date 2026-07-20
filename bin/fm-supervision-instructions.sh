@@ -128,10 +128,21 @@ repair_line() {
 
   case "$HARNESS" in
     omp)
-      printf '%s%s%s%s%s%s\n' "$prefix" 'resume supervision with the OMP tool fm_watch_arm_omp or restart omp with -e ' "$omp_turnend_ext" ' -e ' "$omp_ext" ' if the extension is not loaded.'
+      printf '%s%s%s%s%s%s\n' "$prefix" 'repair a missing or failed watcher cycle with the OMP tool fm_watch_arm_omp, or restart omp with -e ' "$omp_turnend_ext" ' -e ' "$omp_ext" ' if the extensions are not loaded.'
       ;;
     *)
-      printf '%s%s\n' "$prefix" 'resume supervision according to the session-start block for this harness; do not use shell &.'
+      printf '%s%s\n' "$prefix" 'repair missing watcher supervision according to the session-start block for this harness; do not use shell &.'
+      ;;
+  esac
+}
+
+ordinary_wake_line() {
+  case "$HARNESS" in
+    omp)
+      printf '%s\n' '- Ordinary wake: the omp extension already owns watcher continuity; do not arm another cycle.'
+      ;;
+    *)
+      printf '%s\n' '- Ordinary wake: follow the continuation in the harness protocol below; do not use shell &.'
       ;;
   esac
 }
@@ -161,7 +172,7 @@ if [ "$X_MODE" -eq 1 ]; then
 else
   printf '%s\n' '- X mode: inactive; use the default watcher cadence.'
 fi
-printf '%s\n' '- After every handled wake, resume this emitted harness protocol instead of following a hardcoded background-arm recipe.'
+ordinary_wake_line
 printf '\n'
 render_snippet
 printf '\n'

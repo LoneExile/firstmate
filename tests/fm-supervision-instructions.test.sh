@@ -65,6 +65,23 @@ test_repair_lines() {
   pass "renderer repair-line mode is omp-aware and honors conditional state"
 }
 
+test_ordinary_wake_line_distinct_from_repair() {
+  local home out ordinary repair
+  home="$TMP_ROOT/ordinary-home"
+  mkdir -p "$home/state" "$home/config"
+
+  out=$(FM_HOME="$home" "$RENDER")
+  ordinary=$(printf '%s\n' "$out" | grep -F -- '- Ordinary wake:')
+  assert_contains "$ordinary" "the omp extension already owns watcher continuity" "ordinary-wake line does not leave continuity to the extension"
+  assert_not_contains "$ordinary" "fm_watch_arm_omp" "ordinary-wake line incorrectly tells the model to arm the recovery tool"
+  assert_not_contains "$out" "resume this emitted harness protocol" "renderer kept the old hardcoded after-every-wake re-arm wording"
+
+  repair=$(FM_HOME="$home" "$RENDER" --repair-line)
+  assert_contains "$repair" "repair a missing or failed watcher cycle" "repair line lost the recovery verb"
+  assert_contains "$repair" "fm_watch_arm_omp" "repair line lost the extension-owned recovery tool"
+  pass "renderer distinguishes ordinary-wake continuation from failure recovery"
+}
+
 test_omp_snippet_uses_effective_extension_path() {
   local home out turnend watch
   home="$TMP_ROOT/omp-home"
@@ -83,4 +100,5 @@ test_omp_harness_block
 test_harness_arg_ignored
 test_conditional_stanzas
 test_repair_lines
+test_ordinary_wake_line_distinct_from_repair
 test_omp_snippet_uses_effective_extension_path
