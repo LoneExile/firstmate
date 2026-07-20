@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Atomically drain durable watcher wake records, then assert watcher liveness.
+# Atomically drain durable watcher wake records, optionally annotate validated
+# signal status keys after raw consumption commits, then assert liveness.
 set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,6 +11,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DRAIN_TMP=
 DRAIN_LOCK_HELD=false
+RAW_ROWS=
 
 # Defense in depth for the supervision chain: this script runs at the top of
 # every wake-handling and recovery turn, so assert watcher liveness here too. A
@@ -57,9 +59,26 @@ rm -f "$DRAIN_TMP"
 mv "$FM_WAKE_QUEUE" "$DRAIN_TMP" || exit 1
 : > "$FM_WAKE_QUEUE" || exit 1
 
-fm_wake_print_deduped "$DRAIN_TMP" || exit "$?"
-rm -f "$DRAIN_TMP"
+RAW_ROWS=$(fm_wake_print_deduped "$DRAIN_TMP") || exit "$?"
+case "${FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT:-0}" in
+  0) ;;
+  ''|*[!0-9]*) ;;
+  *) sleep "$FM_WAKE_DRAIN_TEST_DELAY_BEFORE_COMMIT" ;;
+esac
+if [ -n "$RAW_ROWS" ]; then
+  # Print-before-delete is the deliberate at-least-once no-loss boundary: a
+  # crash in this micro-gap may replay a wake, and annotations stay outside it.
+  printf '%s\n' "$RAW_ROWS" || exit "$?"
+fi
+rm -f "$DRAIN_TMP" || exit "$?"
 DRAIN_TMP=
+fm_lock_release "$FM_WAKE_QUEUE_LOCK"
+DRAIN_LOCK_HELD=false
+
+# Raw output and queue deletion are authoritative. Everything below is
+# best-effort and cannot restore, duplicate, hide, or fail the consumed rows -
+# including our fork-only parallel-digest nudge, which stays after liveness.
+(fm_wake_print_annotations "$RAW_ROWS") || true
 assert_watcher_liveness
 fm_parallel_digest_nudge_line "$STATE" "$("$SCRIPT_DIR/fm-harness.sh" 2>/dev/null || printf unknown)"
 exit 0
