@@ -451,6 +451,114 @@ EOF
   pass "OMP process-exit cleanup stops the attached arm child"
 }
 
+# --- R2a: queue-truth banner idempotency ------------------------------------
+#
+# The extension's deliverRoutineWake skips a redundant banner while a prior poke
+# is pending (state/.wake-banner-pending) AND the deduped durable queue still has
+# undrained items - but fails OPEN (always pokes when the queue is empty or no
+# marker exists) so the last wake is never dropped. These cases drive one real
+# actionable close (which reaches the routine-delivery path once the successor is
+# ready) and count sendUserMessage deliveries.
+
+install_r2a_fixture() {  # <repo> -> also (re)writes the shared node driver
+  local repo=$1
+  install_omp_watch_extension_fixture "$repo"
+  mkdir -p "$repo/bin"
+  cat > "$repo/bin/fm-watch-arm.sh" <<'SH'
+#!/usr/bin/env bash
+printf 'arm=%s\n' "$$" >> "${FM_ARM_LOG:?}"
+count=$(wc -l < "$FM_ARM_LOG" | tr -d '[:space:]')
+printf 'watcher: started pid=%s (beacon fresh)\n' "$$"
+if [ "$count" -eq 1 ]; then
+  printf 'signal: synthetic actionable close\n'
+  exit 0
+fi
+trap 'exit 0' TERM INT
+while [ ! -e "$FM_STOP_FILE" ]; do sleep 0.02; done
+SH
+  chmod +x "$repo/bin/fm-watch-arm.sh"
+  cat > "$TMP_ROOT/r2a-driver.mjs" <<'EOF'
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+let tool = null;
+let sends = 0;
+const pi = {
+  on() {}, registerCommand() {},
+  registerTool(c) { if (c.name === "fm_watch_arm_omp") tool = c; },
+  zod: { object: () => ({}) },
+  sendUserMessage: async () => { sends += 1; },
+};
+writeFileSync(`${process.env.FM_HOME}/state/.lock`, `${process.pid}\n`);
+const mod = await import(pathToFileURL(process.env.PLUGIN).href);
+mod.default(pi);
+await tool.execute();
+const expect = Number(process.env.EXPECT_SENDS);
+if (expect === 1) {
+  for (let i = 0; i < 400 && sends < 1; i += 1) await new Promise((r) => setTimeout(r, 10));
+} else {
+  // Suppressed: wait for the successor arm (2 rows) then settle past delivery.
+  for (let i = 0; i < 300; i += 1) {
+    const rows = existsSync(process.env.FM_ARM_LOG)
+      ? readFileSync(process.env.FM_ARM_LOG, "utf8").trim().split("\n").length : 0;
+    if (rows >= 2) break;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  await new Promise((r) => setTimeout(r, 300));
+}
+writeFileSync(process.env.FM_STOP_FILE, "stop\n");
+if (sends !== expect) throw new Error(`expected ${expect} send(s), got ${sends}`);
+if (expect === 1 && !existsSync(`${process.env.FM_HOME}/state/.wake-banner-pending`)) {
+  throw new Error("a delivered poke did not create the banner-pending marker");
+}
+process.exit(0);
+EOF
+}
+
+r2a_run() {  # <tag> <expect-sends>; caller pre-seeds $home/state before this
+  local repo=$1 home=$2 expect=$3 out status
+  out=$(PLUGIN="$repo/.omp/extensions/fm-primary-omp-watch.ts" FM_HOME="$home" FM_ROOT_OVERRIDE="$repo" \
+    FM_ARM_LOG="$TMP_ROOT/r2a.log.$$" FM_STOP_FILE="$TMP_ROOT/r2a.stop.$$" EXPECT_SENDS="$expect" \
+    node "$TMP_ROOT/r2a-driver.mjs" 2>&1)
+  status=$?
+  rm -f "$TMP_ROOT/r2a.log.$$" "$TMP_ROOT/r2a.stop.$$"
+  R2A_OUT=$out
+  return "$status"
+}
+
+test_omp_routine_wake_suppressed_when_poke_pending() {
+  local repo home
+  repo="$TMP_ROOT/r2a-suppress-root"; home="$TMP_ROOT/r2a-suppress-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_r2a_fixture "$repo"
+  # A prior poke is pending AND the deduped queue still has undrained items.
+  printf 'pending\n' > "$home/state/.wake-banner-pending"
+  printf '1\t1\tstale\tdefault:wG:pQ\tstale: default:wG:pQ\n' > "$home/state/.wake-queue"
+  r2a_run "$repo" "$home" 0 || fail "R2a suppress case exited non-zero: $R2A_OUT"
+  pass "R2a: a routine watcher wake is suppressed while a prior poke is pending and the queue is undrained"
+}
+
+test_omp_routine_wake_sends_and_marks_when_none_pending() {
+  local repo home
+  repo="$TMP_ROOT/r2a-send-root"; home="$TMP_ROOT/r2a-send-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_r2a_fixture "$repo"
+  # No marker, no queue: the first poke must send AND create the pending marker.
+  r2a_run "$repo" "$home" 1 || fail "R2a send case exited non-zero: $R2A_OUT"
+  pass "R2a: a routine wake with no poke pending sends once and creates the banner-pending marker"
+}
+
+test_omp_routine_wake_fails_open_when_queue_empty() {
+  local repo home
+  repo="$TMP_ROOT/r2a-failopen-root"; home="$TMP_ROOT/r2a-failopen-home"
+  mkdir -p "$repo/bin" "$home/state" "$home/config"
+  install_r2a_fixture "$repo"
+  # A stale marker but an EMPTY queue must NOT suppress the only poke (fail open):
+  # this is the trap - suppressing on the marker alone would drop the last wake.
+  printf 'pending\n' > "$home/state/.wake-banner-pending"
+  r2a_run "$repo" "$home" 1 || fail "R2a fail-open case exited non-zero: $R2A_OUT"
+  pass "R2a: a stale marker with an empty queue still pokes (fail open, never drop the only wake)"
+}
+
 test_omp_extension_present_and_self_hashing
 test_omp_actionable_close_starts_single_successor_before_delivery
 test_omp_hung_successor_falls_back_to_typed_wake
@@ -458,3 +566,6 @@ test_omp_unretired_successor_falls_back_without_retry
 test_omp_empty_close_retries_instead_of_disappearing
 test_omp_actionable_close_rechecks_session_lock
 test_omp_process_exit_cleanup_stops_arm_child
+test_omp_routine_wake_suppressed_when_poke_pending
+test_omp_routine_wake_sends_and_marks_when_none_pending
+test_omp_routine_wake_fails_open_when_queue_empty

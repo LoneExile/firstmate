@@ -20,7 +20,7 @@
 // safety-critical bin/fm-watch-arm.sh loop is untouched.
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
@@ -46,6 +46,10 @@ const state = process.env.FM_STATE_OVERRIDE || `${fmHome}/state`;
 const config = process.env.FM_CONFIG_OVERRIDE || `${fmHome}/config`;
 const armScript = `${fmRoot}/bin/fm-watch-arm.sh`;
 const marker = `${state}/.omp-watch-extension-loaded`;
+// R2a banner idempotency: a "look now" poke is pending until fm-wake-drain.sh
+// runs; the deduped durable queue is the truth the captain actually drains.
+const bannerPendingMarker = `${state}/.wake-banner-pending`;
+const wakeQueue = `${state}/.wake-queue`;
 const extensionVersion = `sha256:${createHash("sha256").update(readFileSync(extensionFile)).digest("hex")}`;
 const retryBaseMs = positiveInteger("FM_WATCH_REARM_RETRY_BASE_MS", 250);
 const retryMaxMs = positiveInteger("FM_WATCH_REARM_RETRY_MAX_MS", 4000);
@@ -164,6 +168,28 @@ export default function (pi: ExtensionAPI) {
       `FIRSTMATE WATCHER WAKE: ${message}\n\nRun bin/fm-wake-drain.sh first and handle the queued wake, then resume OMP supervision. Watcher continuity is extension-owned; no manual re-arm is needed.`,
       { deliverAs: "followUp" },
     );
+  }
+
+  async function deliverRoutineWake(message: string): Promise<void> {
+    // R2a queue-truth banner idempotency: the deduped durable queue
+    // (state/.wake-queue) is the authoritative list the captain drains; this
+    // banner is only a "look now" poke. Skip a redundant poke while a prior
+    // banner is still pending (marker) AND the queue still has undrained items,
+    // so N watcher cycles do not pile N FIRSTMATE WATCHER WAKE follow-ups behind
+    // a busy/blocked captain. Fail OPEN: an empty queue or no pending marker
+    // always pokes, so the last wake is never dropped. fm-wake-drain.sh clears
+    // the marker, re-opening the poke on the next wake.
+    try {
+      if (existsSync(bannerPendingMarker) && statSync(wakeQueue).size > 0) return;
+    } catch {
+      // Any stat/exists error -> fall through and send; never drop a poke.
+    }
+    try {
+      writeFileSync(bannerPendingMarker, "");
+    } catch {
+      // Best-effort marker; a write failure just means the next cycle also pokes.
+    }
+    await sendWake(message);
   }
 
   function surfaceFailure(message: string): void {
@@ -323,8 +349,13 @@ export default function (pi: ExtensionAPI) {
           const failure = await restoreAfterActionableClose(predecessor);
           restoring = false;
           if (stopping) return;
-          const message = failure ? `${classification.message}\n\n${failure}` : classification.message;
-          await sendWake(message);
+          if (failure) {
+            // A continuity-restoration failure is an alarm, never a routine poke:
+            // deliver it unconditionally so idempotency can never swallow it.
+            await sendWake(`${classification.message}\n\n${failure}`);
+          } else {
+            await deliverRoutineWake(classification.message);
+          }
         })().catch(() => {
           // OMP owns delivery errors; fail open so the extension never wedges the session.
         });

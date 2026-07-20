@@ -47,6 +47,13 @@ trap 'exit 143' TERM
 fm_lock_acquire_wait "$FM_WAKE_QUEUE_LOCK"
 DRAIN_LOCK_HELD=true
 
+# R2a: the captain is draining now, so any pending banner poke has been acted on.
+# Clear the extension's banner-idempotency marker (best-effort) so the NEXT
+# watcher wake sends a fresh FIRSTMATE WATCHER WAKE banner instead of being
+# suppressed as redundant. Covers both the empty-queue early exit and the normal
+# drain below.
+rm -f "$STATE/.wake-banner-pending" 2>/dev/null || true
+
 if [ ! -s "$FM_WAKE_QUEUE" ]; then
   : > "$FM_WAKE_QUEUE"
   assert_watcher_liveness
