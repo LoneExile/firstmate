@@ -63,6 +63,10 @@ fi
 . "$SCRIPT_DIR/fm-backend.sh"
 # shellcheck source=bin/fm-marker-lib.sh
 . "$SCRIPT_DIR/fm-marker-lib.sh"
+# shellcheck source=bin/fm-wake-lib.sh
+# Portable per-target mutex (fm_lock_acquire_wait/fm_lock_release) shared with
+# the wake queue; used below to serialize concurrent sends to one endpoint.
+. "$SCRIPT_DIR/fm-wake-lib.sh"
 
 FM_GUARD_CONTINUE_LINE='This is a supervision warning only; the requested message WILL still be sent.' "$SCRIPT_DIR/fm-guard.sh" || true
 
@@ -195,6 +199,15 @@ fi
 # target_ready path before sending, while zellij verifies pane labels in its
 # send implementation. A failed backend send is still surfaced below as a hard
 # error with the attempted resolution attached.
+
+# Serialize sends to this exact target so two concurrent fm-send callers cannot
+# interleave their keystrokes into one pane (e.g. several Quartermaster
+# /set-sail handoffs racing into the captain's pane). Keyed by the resolved
+# target; different targets never contend. The mutex is stale-tolerant and
+# released on exit, so every error path below unlocks too.
+SEND_LOCK="$STATE/.send-lock.$(printf '%s' "$T" | tr -c 'A-Za-z0-9' '_')"
+fm_lock_acquire_wait "$SEND_LOCK"
+trap 'fm_lock_release "$SEND_LOCK"' EXIT
 
 if [ "${1:-}" = "--key" ]; then
   if ! fm_backend_send_key "$TARGET_BACKEND" "$T" "$2" "$EXPECTED_LABEL"; then
