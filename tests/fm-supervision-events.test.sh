@@ -93,6 +93,22 @@ fi
 grep -q 'absorbed push' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the paused absorb should be logged to the triage log"
 pass "handle_push_transition: a declared-pause crew is absorbed (no fast wake), left to the poll loop's long cadence"
 
+# --- handle_push_transition: absorb (no wake) a done edge for a torn-down pane -
+
+reset_state
+# No meta at all: the crew for this window was already torn down. A stale "peek
+# the pane" poke would be pure noise, so R1 must absorb it (commit the dedupe,
+# no wake, no enqueue) instead of stacking a FIRSTMATE WATCHER WAKE for a pane
+# that no longer exists.
+handle_push_transition herdr default "$(mkrec wG:pQ "done")"
+if [ -e "$STATE_DIR/.wake-queue" ] && grep -q 'stale' "$STATE_DIR/.wake-queue"; then
+  fail "a done edge for a torn-down (meta-less) pane must NOT enqueue a stale wake: $(cat "$STATE_DIR/.wake-queue")"
+fi
+[ ! -s "$WAKE_LOG" ] || fail "a torn-down (meta-less) pane must not wake the supervisor (R1 stale-suppression)"
+grep -q 'no live meta' "$STATE_DIR/.watch-triage.log" 2>/dev/null || fail "the no-meta absorb should be logged to the triage log"
+[ -e "$STATE_DIR/.herdr-escalated-default_wG_pQ" ] || fail "the transition must still be committed so it is not reprocessed forever"
+pass "handle_push_transition: a done edge for a torn-down pane is absorbed (no wake), transition still committed (R1)"
+
 # --- event_wait_or_sleep: secondmate windows are excluded from the pane list --
 
 reset_state

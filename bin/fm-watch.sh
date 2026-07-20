@@ -248,6 +248,22 @@ recorded_windows() {
   done
 }
 
+# 0 iff <window> still maps to a live recorded meta. Uses the SAME
+# fm_backend_target_of_meta accessor as recorded_windows so the two never
+# disagree on window normalization (the `default:` prefix footgun). Guards the
+# push-path stale wake below: a torn-down pane has no meta, so a "peek the pane"
+# poke for it is pure noise. window_to_task cannot serve here - it synthesizes a
+# fallback id for a meta-less window, so it is never empty.
+window_has_recorded_meta() {  # <window>
+  local w=$1 meta mw
+  for meta in "$STATE"/*.meta; do
+    [ -e "$meta" ] || continue
+    mw=$(fm_backend_target_of_meta "$meta")
+    [ "$mw" = "$w" ] && return 0
+  done
+  return 1
+}
+
 # Exit reporting a wake. Consecutive heartbeats with no other wake in between
 # mean an idle fleet, so the heartbeat interval backs off exponentially
 # (base * 2^streak, capped at HEARTBEAT_MAX); any real wake resets the cadence.
@@ -675,6 +691,16 @@ handle_push_transition() {  # <backend> <session> <record>
   to=$(fm_transition_to_status "$record")
   [ -n "$pane_id" ] || { sleep 1; return; }
   window="$session:$pane_id"
+  # No live meta for this pane means the crew was already torn down, so a stale
+  # wake for it is pure noise (nothing left to supervise). Commit the transition
+  # so it is not reprocessed, then absorb without waking the captain. Only the
+  # push-path stale wake is dropped this way; signal:/check: wakes can legitimately
+  # outlive a pane and are never suppressed here.
+  if ! window_has_recorded_meta "$window"; then
+    triage_log "absorbed push $to (no live meta - window torn down): $window"
+    fm_backend_commit_transition "$backend" "$STATE" "$session" "$record" || exit 1
+    return
+  fi
   task=$(window_to_task "$window" "$STATE")
   if status_is_paused "$(last_status_line "$STATE/$task.status")"; then
     triage_log "absorbed push $to (declared pause, awaiting external): $window"
