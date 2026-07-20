@@ -4,7 +4,7 @@
 # (see its charter) when the human says /set-sail or /farewell.
 #
 # Usage: fm-set-sail.sh [--to captain|backlog|both] [--title <t>] [--priority 0-4]
-#                       [--repo <name>] [--plan <text>]
+#                       [--repo <name>] [--plan <text>] [--label <l>]
 #   The plan text comes from --plan or, if omitted, stdin. --to defaults to
 #   'both' when a captain pane was recorded at summon time, else 'backlog'.
 #   The plan is always written to a durable handoff file under state/ and, for
@@ -15,6 +15,9 @@
 #   With no plan text it skips
 #   delivery and still retires the pane. Idempotent: no Quartermaster aboard is
 #   a clean no-op.
+#   --label targets a specific instance for a manual teardown from a shell; a
+#   Quartermaster's own /set-sail inherits its instance via FM_QM_MARKER and
+#   needs no flag.
 set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -32,7 +35,40 @@ esac
 # for the pane kill at teardown; fm_backend.sh sources adapters lazily.
 fm_backend_source herdr >/dev/null 2>&1 || true
 
-MARKER="${FM_QM_MARKER:-$STATE/.quartermaster}"
+TO=""
+TITLE=""
+PRIORITY=""
+REPO=""
+PLAN=""
+REQ_LABEL=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --to) TO=${2:-}; shift 2 ;;
+    --title) TITLE=${2:-}; shift 2 ;;
+    --priority) PRIORITY=${2:-}; shift 2 ;;
+    --repo) REPO=${2:-}; shift 2 ;;
+    --plan) PLAN=${2:-}; shift 2 ;;
+    --label) REQ_LABEL=${2:-}; shift 2 ;;
+    *) echo "set-sail: unknown argument '$1' (see --help)" >&2; exit 2 ;;
+  esac
+done
+
+# Which instance? FM_QM_MARKER (injected into the Quartermaster at summon) wins;
+# else --label resolves a per-instance marker for a manual teardown; else the
+# legacy singleton marker from before multi-instance.
+if [ -n "${FM_QM_MARKER:-}" ]; then
+  MARKER="$FM_QM_MARKER"
+elif [ -n "$REQ_LABEL" ]; then
+  # Sanitize a manually-supplied label the same way fm-ahoy does: it becomes a
+  # path, so reject traversal / odd characters before building the marker path.
+  case "$REQ_LABEL" in
+    ''|.*|-*|*..*|*[!A-Za-z0-9._-]*) echo "set-sail: invalid --label '$REQ_LABEL' - use [A-Za-z0-9._-], no leading dot/dash, no '..'." >&2; exit 2 ;;
+  esac
+  [ "${#REQ_LABEL}" -le 32 ] || { echo "set-sail: --label '$REQ_LABEL' too long (max 32)." >&2; exit 2; }
+  MARKER="$STATE/.quartermaster-$REQ_LABEL"
+else
+  MARKER="$STATE/.quartermaster"
+fi
 if [ ! -f "$MARKER" ]; then
   echo "set-sail: no Quartermaster is aboard (no $MARKER); nothing to do."
   exit 0
@@ -41,22 +77,13 @@ fi
 WINDOW=$(grep '^window=' "$MARKER" | cut -d= -f2-)
 SCRATCH=$(grep '^scratch=' "$MARKER" | cut -d= -f2-)
 CAPTAIN=$(grep '^captain=' "$MARKER" | cut -d= -f2-)
-
-TO=""
-TITLE=""
-PRIORITY=""
-REPO=""
-PLAN=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --to) TO=${2:-}; shift 2 ;;
-    --title) TITLE=${2:-}; shift 2 ;;
-    --priority) PRIORITY=${2:-}; shift 2 ;;
-    --repo) REPO=${2:-}; shift 2 ;;
-    --plan) PLAN=${2:-}; shift 2 ;;
-    *) echo "set-sail: unknown argument '$1' (see --help)" >&2; exit 2 ;;
+LABEL=$(grep '^label=' "$MARKER" | cut -d= -f2-)
+# Fallback label from the marker basename (the legacy singleton has none).
+if [ -z "$LABEL" ]; then
+  case "${MARKER##*/}" in
+    .quartermaster-*) LABEL=${MARKER##*/.quartermaster-} ;;
   esac
-done
+fi
 
 # Plan from --plan, else stdin when piped.
 if [ -z "$PLAN" ] && [ ! -t 0 ]; then
@@ -82,7 +109,9 @@ delivered=""
 mint_id=""
 PLAN_FILE=""
 if [ -n "$PLAN" ]; then
-  PLAN_FILE="$STATE/quartermaster-plan-$(date -u +%Y%m%dT%H%M%SZ).md"
+  # Label + pid make the filename unique across instances and across two
+  # same-second /set-sail handoffs (which would otherwise overwrite one plan).
+  PLAN_FILE="$STATE/quartermaster-plan-${LABEL:+$LABEL-}$(date -u +%Y%m%dT%H%M%SZ)-$$.md"
   printf '# %s\n\n%s\n' "$TITLE" "$PLAN" > "$PLAN_FILE"
 
   if [ "$TO" = backlog ] || [ "$TO" = both ]; then
@@ -115,6 +144,7 @@ if [ -n "$PLAN" ]; then
       msg="Quartermaster set sail: $TITLE - implement now."
     fi
     [ -z "$mint_id" ] || msg="$msg queued=$mint_id."
+    [ -z "$LABEL" ] || msg="$msg qm=$LABEL."
     msg="$msg plan=$PLAN_FILE"
     if FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$CAPTAIN" "$msg" >/dev/null 2>&1; then
       delivered="${delivered}captain "
