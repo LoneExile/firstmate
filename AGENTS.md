@@ -408,7 +408,7 @@ Mention cost as a courtesy when unusually much work is running, but never block 
 
 The human may summon a Quartermaster - a separate companion pane to brainstorm and plan with - so they need not tie up the fleet.
 When asked to `/ahoy` or to summon the quartermaster, load the `ahoy` skill; it spawns the companion, and the captain keeps supervising.
-A `Quartermaster set sail:` message is that companion handing back a plan - intake it as ordinary work (its `plan=<path>` file holds the detail), implementing now or from the backlog as the message says.
+A `Quartermaster set sail:` (implement now) or `Quartermaster filed to backlog (do it later):` message is that companion handing back a plan - intake it as ordinary work (its `plan=<path>` file holds the detail), acting on it now or leaving it in the backlog as the verb says.
 
 ## 10. Backlog contract
 
