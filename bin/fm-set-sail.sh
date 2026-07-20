@@ -8,8 +8,11 @@
 #   The plan text comes from --plan or, if omitted, stdin. --to defaults to
 #   'both' when a captain pane was recorded at summon time, else 'backlog'.
 #   The plan is always written to a durable handoff file under state/ and, for
-#   backlog routes, added via tasks-axi; the captain is only ever pinged with a
-#   one-line pointer (never a multi-line steer). With no plan text it skips
+#   backlog/both routes, added via tasks-axi. Whenever a captain pane was
+#   recorded the captain is pinged a one-line pointer (never a multi-line steer)
+#   on EVERY route - including a backlog "do it later" filing, so a queued plan
+#   is never silent to the dispatcher; only the verb changes with the route.
+#   With no plan text it skips
 #   delivery and still retires the pane. Idempotent: no Quartermaster aboard is
 #   a clean no-op.
 set -eu
@@ -98,8 +101,19 @@ if [ -n "$PLAN" ]; then
     fi
   fi
 
-  if [ "$TO" = captain ] || [ "$TO" = both ]; then
-    msg="Quartermaster set sail: $TITLE - implement now."
+  # Ping the captain a one-line pointer whenever a captain pane is recorded -
+  # even on a backlog ("do it later") route. The captain owns dispatch, so a
+  # plan filed to the backlog that they never hear about reads as a dropped
+  # handoff and invites duplicate manual recovery (observed 2026-07-20: a
+  # backlog-route set-sail landed the task but pinged nothing, so the captain
+  # re-created it by hand). The ping stays a pointer, never a multi-line steer;
+  # only the verb changes with the route.
+  if [ -n "$CAPTAIN" ]; then
+    if [ "$TO" = backlog ]; then
+      msg="Quartermaster filed to backlog (do it later): $TITLE."
+    else
+      msg="Quartermaster set sail: $TITLE - implement now."
+    fi
     [ -z "$mint_id" ] || msg="$msg queued=$mint_id."
     msg="$msg plan=$PLAN_FILE"
     if FM_HOME="$FM_HOME" "$SCRIPT_DIR/fm-send.sh" "$CAPTAIN" "$msg" >/dev/null 2>&1; then

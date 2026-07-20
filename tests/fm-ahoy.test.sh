@@ -169,8 +169,26 @@ test_set_sail_empty_plan_retires_without_handoff() {
   pass "fm-set-sail with no plan retires cleanly without a handoff"
 }
 
+test_set_sail_backlog_route_pings_captain() {
+  # A backlog ("do it later") route must still ping the captain a one-line
+  # pointer when a captain pane is recorded - a filed plan the captain never
+  # hears about strands the work (observed 2026-07-20: backlog set-sail landed
+  # the task but pinged nothing, so the captain re-created it by hand).
+  local fake; fake=$(make_qm_root setsail-backlog)
+  run_ahoy "$fake" "default:wA:p1" || fail "summon failed"
+  run_set_sail "$fake" --to backlog --title "Later widget" --plan "Build the widget later: A, B, C." \
+    || fail "backlog set-sail exited non-zero"
+  grep -q 'args=add ' "$fake/log/tasks" || fail "tasks-axi add not invoked for the backlog route"
+  [ -f "$fake/log/send" ] || fail "captain not pinged on the backlog route (no fm-send at all)"
+  grep -q 'fm-send default:wA:p1' "$fake/log/send" || fail "captain not pinged on the backlog route"
+  grep -q 'filed to backlog' "$fake/log/send" || fail "backlog ping did not use the 'do it later' pointer wording"
+  grep -q 'queued=qm-plan-t1' "$fake/log/send" || fail "backlog ping missing the minted backlog id"
+  pass "fm-set-sail pings the captain a pointer even on a backlog route"
+}
+
 test_ahoy_summons
 test_ahoy_refocuses_when_aboard
 test_set_sail_hands_off_and_retires
 test_set_sail_noop_without_marker
 test_set_sail_empty_plan_retires_without_handoff
+test_set_sail_backlog_route_pings_captain

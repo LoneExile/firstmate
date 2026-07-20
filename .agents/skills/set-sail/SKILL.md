@@ -29,6 +29,6 @@ On `/set-sail` or `/farewell` (or when the human otherwise signals you are done)
    printf '%s' "<the plan>" | "$FM_HOME/bin/fm-set-sail.sh" --to <route> --title "<short title>"
    ```
 
-`fm-set-sail.sh` writes the plan to a durable file, adds it to the backlog for a backlog/both route, pings the captain with a one-line pointer for a captain/both route, then closes this pane; the marker and scratch home are cleaned up for you.
+`fm-set-sail.sh` writes the plan to a durable file, adds it to the backlog for a backlog/both route, and pings the captain a one-line pointer whenever a captain pane is known - on every route, including a backlog "do it later" filing (only the verb changes) - then closes this pane; the marker and scratch home are cleaned up for you.
 Its `--help` has the full flag list (`--priority`, `--repo`).
 `$FM_HOME` is exported into your session at launch, so the path above resolves as written.
