@@ -159,6 +159,33 @@ qm_auto_label() {  # lowest-free qm-N (skips a marker or an in-flight claim)
   printf 'qm-%s' "$n"
 }
 
+# Refocus an existing instance of this label instead of spawning a duplicate.
+# Prints the refocus notice and exits 0 when the marker is present and its pane
+# is not confidently dead (unknown fails safe toward refocus); removes a
+# confidently-dead marker and returns 1 so the caller proceeds to spawn; returns
+# 1 with no action when no marker exists. Called twice: once before the spawn
+# claim (the common explicit-label case) and once again right after the claim is
+# taken, to close the window where a concurrent same-label summon completed its
+# whole spawn between our marker check and our claim (else we would rm -rf and
+# respawn over the live sibling).
+qm_refocus_if_aboard() {  # <marker> <label>
+  local marker=$1 label=$2 existing_window existing_ses existing_tab alive
+  [ -f "$marker" ] || return 1
+  existing_window=$(grep '^window=' "$marker" | cut -d= -f2- || true)
+  existing_ses=$(grep '^herdr_session=' "$marker" | cut -d= -f2- || true)
+  existing_tab=$(grep '^herdr_tab_id=' "$marker" | cut -d= -f2- || true)
+  alive=$(fm_backend_herdr_agent_alive "$existing_window" 2>/dev/null || echo unknown)
+  if [ "$alive" != dead ]; then
+    if [ -n "$existing_ses" ] && [ -n "$existing_tab" ]; then
+      fm_backend_herdr_cli "$existing_ses" tab focus "$existing_tab" >/dev/null 2>&1 || true
+    fi
+    echo "ahoy: Quartermaster '$label' is already aboard (window=$existing_window, state=$alive); refocused. Use /set-sail in that pane to dismiss it."
+    exit 0
+  fi
+  rm -f "$marker"
+  return 1
+}
+
 # --- modes --------------------------------------------------------------------
 
 if [ "$MODE" = list ]; then
@@ -213,21 +240,9 @@ SCRATCH=$(qm_scratch_for "$LABEL")
 
 # Explicit label already aboard? Refocus rather than spawn a duplicate (unknown
 # fails safe toward refocus). A bare/auto label is always fresh, so this only
-# fires for an explicitly-requested label.
-if [ -f "$MARKER" ]; then
-  existing_window=$(grep '^window=' "$MARKER" | cut -d= -f2- || true)
-  existing_ses=$(grep '^herdr_session=' "$MARKER" | cut -d= -f2- || true)
-  existing_tab=$(grep '^herdr_tab_id=' "$MARKER" | cut -d= -f2- || true)
-  alive=$(fm_backend_herdr_agent_alive "$existing_window" 2>/dev/null || echo unknown)
-  if [ "$alive" != dead ]; then
-    if [ -n "$existing_ses" ] && [ -n "$existing_tab" ]; then
-      fm_backend_herdr_cli "$existing_ses" tab focus "$existing_tab" >/dev/null 2>&1 || true
-    fi
-    echo "ahoy: Quartermaster '$LABEL' is already aboard (window=$existing_window, state=$alive); refocused. Use /set-sail in that pane to dismiss it."
-    exit 0
-  fi
-  rm -f "$MARKER"
-fi
+# fires for an explicitly-requested label; a confidently-dead marker is cleaned
+# so we fall through and spawn.
+qm_refocus_if_aboard "$MARKER" "$LABEL" || true
 
 # Soft cap: no hard limit, but warn past 3 live instances (each is a live omp
 # session). The count excludes the one about to spawn.
@@ -247,15 +262,18 @@ if ! fm_lock_try_acquire "$LOCKDIR"; then
 fi
 trap 'fm_lock_release "$LOCKDIR"' EXIT
 
+# Re-check now that the claim is ours: a concurrent same-label summon may have
+# finished its entire spawn (marker written, its own claim released) in the
+# window between our pre-claim marker check and acquiring this lock. Refocus that
+# live sibling instead of rebuilding its scratch and spawning a duplicate over it.
+qm_refocus_if_aboard "$MARKER" "$LABEL" || true
+
 # The captain's own pane, so /set-sail can ping it. discover_supervisor_target
 # returns 0 only on a real resolution; a bare fallback (returns 1) is treated as
 # "no captain pane known" so the handoff routes to the backlog instead of a
 # bogus default target.
-if CAPTAIN="$(discover_supervisor_target)"; then
-  CAPTAIN_BACKEND="$(discover_supervisor_backend 2>/dev/null || true)"
-else
+if ! CAPTAIN="$(discover_supervisor_target)"; then
   CAPTAIN=""
-  CAPTAIN_BACKEND=""
 fi
 
 # Fresh scratch home + companion charter (this instance's whole AGENTS.md). Only
@@ -331,7 +349,6 @@ WINDOW="$SES:$PANE_ID"
   echo "herdr_pane_id=$PANE_ID"
   echo "scratch=$SCRATCH"
   echo "captain=$CAPTAIN"
-  echo "captain_backend=$CAPTAIN_BACKEND"
   echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$MARKER.tmp"
 mv -f "$MARKER.tmp" "$MARKER"
@@ -341,8 +358,8 @@ mv -f "$MARKER.tmp" "$MARKER"
 # and no turn-end supervision hook. The charter is auto-loaded from AGENTS.md.
 # FM_QM_MARKER is this instance's own marker, so /set-sail tears down exactly it.
 PROMPT="Ahoy! You are the Quartermaster; read AGENTS.md in this directory for your charter. Greet me in one line, then ask what we are brainstorming, planning, or building."
-LAUNCH=$(printf 'exec env FM_HOME=%q FM_QM_MARKER=%q FM_QM_LABEL=%q FM_QM_CAPTAIN=%q FM_QM_CAPTAIN_BACKEND=%q omp %q' \
-  "$FM_HOME" "$MARKER" "$LABEL" "$CAPTAIN" "$CAPTAIN_BACKEND" "$PROMPT")
+LAUNCH=$(printf 'exec env FM_HOME=%q FM_QM_MARKER=%q FM_QM_LABEL=%q FM_QM_CAPTAIN=%q omp %q' \
+  "$FM_HOME" "$MARKER" "$LABEL" "$CAPTAIN" "$PROMPT")
 if ! fm_backend_herdr_send_text_line "$WINDOW" "$LAUNCH"; then
   echo "ahoy: created the Quartermaster pane but failed to launch omp in it (window=$WINDOW); run '/set-sail' or fm-set-sail.sh to clean up." >&2
   exit 1

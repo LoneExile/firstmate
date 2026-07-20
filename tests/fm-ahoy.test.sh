@@ -340,6 +340,59 @@ test_ahoy_declines_same_label_while_claim_held() {
   pass "fm-ahoy declines a duplicate same-label summon while a claim is in progress"
 }
 
+test_ahoy_rechecks_marker_after_claim() {
+  # Close the check-then-claim window: a concurrent same-label summon can finish
+  # its whole spawn (marker written, its own claim released) AFTER our pre-claim
+  # marker check but BEFORE we take the lock. Without the post-claim re-check we
+  # would rm -rf the sibling's scratch and spawn a duplicate over it. Simulated
+  # deterministically: a live sibling marker makes reap + soft-cap each call the
+  # alive stub once before the lock, and on the 2nd call (soft-cap, after the
+  # pre-claim check) the stub writes THIS label's marker - so it "appears" after
+  # our pre-claim check but before the claim, where only the post-claim re-check
+  # can catch it.
+  local fake; fake=$(make_qm_root ahoy-recheck)
+  printf 'alive' > "$fake/log/alive"
+  # A live sibling so reap + soft-cap each invoke the alive stub before the lock.
+  printf 'label=sib\nwindow=default:pSib\nherdr_session=default\nherdr_tab_id=tabSib\nscratch=%s\n' \
+    "$fake/state/quartermaster-home-sib" > "$fake/state/.quartermaster-sib"
+  mkdir -p "$fake/state/quartermaster-home-sib"
+  # Counting alive stub: on call #2 create THIS label's marker (claim free, marker present).
+  cat > "$fake/bin/backends/herdr.sh" <<'SH'
+# shellcheck shell=bash
+fm_backend_herdr_agent_alive() {
+  local n=0
+  if [ -n "${QM_ALIVE_CALLS:-}" ]; then
+    n=$(( $(cat "$QM_ALIVE_CALLS" 2>/dev/null || echo 0) + 1 ))
+    echo "$n" > "$QM_ALIVE_CALLS"
+  fi
+  if [ "${QM_CREATE_TARGET_ON_CALL:-}" = "$n" ] && [ -n "${QM_TARGET_MARKER:-}" ] && [ ! -f "$QM_TARGET_MARKER" ]; then
+    printf 'label=race\nwindow=default:pRace\nherdr_session=default\nherdr_tab_id=tabRace\nscratch=%s\n' \
+      "${QM_TARGET_SCRATCH:-}" > "$QM_TARGET_MARKER"
+  fi
+  cat "${QM_ALIVE_FILE:-/dev/null}" 2>/dev/null || printf 'dead'
+}
+fm_backend_herdr_container_ensure() { printf '%s:%s\t%s' "${QM_SES:-default}" "${QM_WS:-ws1}" ""; }
+fm_backend_herdr_create_task() { printf 'create_task %s\n' "$*" >>"$QM_LOG"; printf '%s %s' "${QM_TAB:-tab1}" "${QM_PANE:-p1}"; }
+fm_backend_herdr_send_text_line() { printf 'send_text_line target=%s\n' "$1" >>"$QM_LOG"; printf '%s\n' "$2" >"$QM_LAUNCH"; }
+fm_backend_herdr_cli() { printf 'cli %s\n' "$*" >>"$QM_LOG"; }
+fm_backend_herdr_kill() { printf 'kill %s\n' "$1" >>"$QM_LOG"; }
+SH
+  local out rc=0
+  out=$(env -u TMUX -u TMUX_PANE -u HERDR_ENV -u HERDR_PANE_ID \
+    FM_HOME="$fake" FM_BACKEND=herdr \
+    FM_SUPERVISOR_TARGET="default:wA:p1" FM_SUPERVISOR_BACKEND=herdr \
+    QM_LOG="$fake/log/calls" QM_LAUNCH="$fake/log/launch" QM_ALIVE_FILE="$fake/log/alive" \
+    QM_ALIVE_CALLS="$fake/log/alive-calls" QM_CREATE_TARGET_ON_CALL=2 \
+    QM_TARGET_MARKER="$fake/state/.quartermaster-race" \
+    QM_TARGET_SCRATCH="$fake/state/quartermaster-home-race" \
+    bash "$fake/bin/fm-ahoy.sh" race 2>&1) || rc=$?
+  [ "$rc" = 0 ] || fail "ahoy should exit 0 (refocus) when the marker appeared post-claim (got $rc)"
+  printf '%s' "$out" | grep -q "'race' is already aboard" || fail "ahoy did not refocus a sibling that appeared after the pre-claim check"
+  ! grep -q '^create_task ' "$fake/log/calls" 2>/dev/null || fail "ahoy spawned a duplicate pane over a sibling that appeared post-claim (create_task fired)"
+  [ ! -d "$fake/state/quartermaster-home-race" ] || fail "ahoy rebuilt a scratch home over a sibling that appeared post-claim"
+  pass "fm-ahoy re-checks the marker after the claim and refocuses a sibling that appeared post-check"
+}
+
 test_ahoy_summons
 test_ahoy_refocuses_same_label
 test_ahoy_bare_autolabels
@@ -350,6 +403,7 @@ test_ahoy_reap_flag_retires_instance
 test_ahoy_rejects_bad_label
 test_ahoy_warns_past_three_live
 test_ahoy_declines_same_label_while_claim_held
+test_ahoy_rechecks_marker_after_claim
 test_set_sail_hands_off_and_retires
 test_set_sail_plan_filename_is_unique
 test_set_sail_noop_without_marker
