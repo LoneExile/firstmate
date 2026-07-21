@@ -251,7 +251,15 @@ status_open_activities() {  # <status-file-or-dash>
 }
 
 # task id from a recorded window target, falling back to the tmux-shaped
-# "<session>:fm-<id>" form when no metadata state is available.
+# "<session>:fm-<id>" form when no metadata state is available. The fallback is
+# SYNTHESIZED, so this function NEVER returns empty - even for a torn-down pane
+# with no meta at all. That is correct for callers that need *a* task id to read
+# a status file (the synthesized id may just name a file that does not exist),
+# but it makes this function useless as a meta-existence guard: `[ -z "$task" ]`
+# is never true. For "does this window still have a live recorded meta", check
+# the meta directly via the same accessor `recorded_windows` uses
+# (`fm_backend_target_of_meta`), comparing against the window - do not route
+# through window_to_task.
 window_to_task() {
   local w=$1 state=${2:-${STATE:-${FM_STATE_OVERRIDE:-}}} meta mw mt t
   if [ -n "$state" ]; then
