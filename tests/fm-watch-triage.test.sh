@@ -753,6 +753,46 @@ test_exited_declared_pause_is_bounded_but_live_gate_surfaces() {
   pass "exited declared-pause and captain-held panes use bounded pause cadence while a live decision gate still surfaces once"
 }
 
+# GAP-CLOSE (#950): fm_backend_agent_alive now maps an authoritatively MISSING
+# tmux endpoint (window absent from a readable session inventory) to `dead`
+# instead of `unknown`. The watcher's bounded-paused recheck fires only when
+# agent_alive == dead, so this proves the watcher correctly consumes the new
+# missing->dead semantics end to end - not via a bare-shell foreground (which
+# the sibling test above already covers) but via the new list-windows inventory
+# path: the fake tmux reports a readable inventory that OMITS the recorded
+# window, so fm_backend_tmux_agent_state=missing before any current-command read.
+test_captain_held_bounded_recheck_via_missing_endpoint() {
+  local dir state fakebin out capture_file statusf window key sig pid
+  dir=$(make_case held-missing-endpoint); state="$dir/state"; fakebin="$dir/fakebin"
+  out="$dir/watch.out"; capture_file="$dir/pane.txt"; statusf="$state/held.status"
+  window="test:fm-held"
+  printf 'idle bare shell after captain-held transfer\n' > "$capture_file"
+  printf 'window=%s\nkind=ship\nharness=grok\nbackend=tmux\n' "$window" > "$state/held.meta"
+  printf 'captain-held [key=route]: tracked by held-decision-route\n' > "$statusf"
+  back=$(( $(date +%s) - 500 ))
+  if [ "$(uname)" = Darwin ]; then touch -mt "$(date -r "$back" '+%Y%m%d%H%M.%S')" "$statusf"
+  else touch -m -d "@$back" "$statusf"; fi
+  sig=$(seen_sig "$statusf"); printf '%s' "$sig" > "$state/.seen-held_status"
+  key=$(printf '%s' "$window" | tr ':/.' '___')
+  printf '%s' "$(hash_text 'idle bare shell after captain-held transfer')" > "$state/.hash-$key"
+  printf '1\n' > "$state/.count-$key"
+
+  # FM_FAKE_TMUX_WINDOW points at a DIFFERENT window than the recorded one, so
+  # `tmux list-windows` returns a readable inventory that OMITS fm-held ->
+  # fm_backend_tmux_agent_state=missing -> fm_backend_agent_alive=dead. If the
+  # missing->dead mapping regressed to `unknown`, the agent_alive != dead gate
+  # would take the non-bounded `none` path and this bounded recheck would vanish.
+  PATH="$fakebin:$PATH" FM_FAKE_TMUX_WINDOW="test:fm-elsewhere" FM_FAKE_TMUX_CAPTURE="$capture_file" \
+    FM_FAKE_TMUX_CURRENT_COMMAND=zsh FM_FAKE_CREW_STATE='state: stopped · source: pane · bare shell' \
+    FM_STATE_OVERRIDE="$state" FM_CREW_STATE_BIN="$fakebin/fm-crew-state.sh" FM_PAUSE_RESURFACE_SECS=240 FM_POLL=1 FM_SIGNAL_GRACE=1 \
+    FM_CHECK_INTERVAL=999999 FM_HEARTBEAT=999999 "$WATCH" > "$out" &
+  pid=$!
+  wait_for_exit "$pid" 40 || fail "captain-held missing-endpoint pane did not re-surface on the bounded cadence: $(cat "$out")"
+  grep -F "awaiting external" "$state/.wake-queue" >/dev/null \
+    || fail "a missing tmux endpoint (missing->dead) did not drive the bounded paused recheck: $(cat "$state/.wake-queue" 2>/dev/null)"
+  pass "watcher: an authoritatively missing tmux endpoint reads dead and drives the bounded paused recheck (#950)"
+}
+
 test_secondmate_paused_resurfaces_in_normal_mode() {
   local dir state fakebin out capture_file statusf window key pane_hash sig pid back
   dir=$(make_case secondmate-paused-resurface); state="$dir/state"; fakebin="$dir/fakebin"
@@ -1291,6 +1331,7 @@ test_wedge_escalation_resets_when_pane_becomes_active
 test_nonterminal_stale_not_working_surfaced
 test_nonterminal_stale_paused_absorbed_then_resurfaced
 test_exited_declared_pause_is_bounded_but_live_gate_surfaces
+test_captain_held_bounded_recheck_via_missing_endpoint
 test_secondmate_paused_resurfaces_in_normal_mode
 test_secondmate_nonpaused_stale_remains_suppressed
 test_secondmate_unpause_clears_pause_tracking

@@ -342,6 +342,10 @@ case "${1:-} ${2:-}" in
   "agent get")
     if [ "${3:-}" = p-new ] && [ -e "$spawned" ]; then
       printf '%s\n' '{"result":{"agent":{"agent_status":"idle"}}}'
+    elif [ "${3:-}" = p-old ] && [ ! -e "$killed" ] && [ -n "${FM_FAKE_HERDR_OLD_ALIVE:-}" ]; then
+      # A live registered agent still on the recorded pane (used to prove the
+      # sweep leaves an alive Herdr secondmate untouched).
+      printf '%s\n' '{"result":{"agent":{"agent_status":"working"}}}'
     else
       printf '%s\n' '{"error":{"code":"agent_not_found"}}' >&2
       exit 1
@@ -471,6 +475,7 @@ EOF
 run_session_start_herdr_secondmate() {
   local root=$1 home=$2 fakebin=$3 mate=$4 log=$5 state=$6
   FM_BACKEND=herdr FM_FAKE_HERDR_LOG="$log" FM_FAKE_HERDR_STATE="$state" \
+    FM_FAKE_HERDR_OLD_ALIVE="${FM_FAKE_HERDR_OLD_ALIVE:-}" \
     FM_FAKE_SECOND_MATE_ID="$SESSION_START_HERDR_SECOND_MATE_ID" \
     run_session_start "$home" "$root" "$fakebin:$BASE_PATH"
 }
@@ -857,6 +862,30 @@ EOF
   assert_grep 'herdr_pane_id=p-new' "$home/state/$SESSION_START_HERDR_SECOND_MATE_ID.meta" \
     "the real respawn path did not record the replacement Herdr pane"
   pass "session start: a confirmed Herdr husk is closed and relaunched"
+}
+
+test_session_start_leaves_live_herdr_secondmate_untouched() {
+  local rec root home fakebin mate log state out
+  rec=$(prepare_session_start_herdr_secondmate secondmate-herdr-live)
+  IFS='|' read -r root home fakebin mate log state <<EOF
+$rec
+EOF
+
+  # p-old reports a live registered agent -> herdr agent_state 'alive' -> the
+  # session-start sweep must leave it untouched (no pane close, no relaunch).
+  # This is the herdr-default counterpart of the tmux 'ambiguous->skip' safety,
+  # and the sweep-level 'alive->untouched' coverage that the dropped tmux
+  # positive-alive test could not express (omp has no positive-alive on tmux).
+  out=$(FM_FAKE_HERDR_OLD_ALIVE=1 run_session_start_herdr_secondmate "$root" "$home" "$fakebin" "$mate" "$log" "$state")
+
+  assert_not_contains "$out" "SECONDMATE_LIVENESS:" "a live Herdr secondmate should be handled silently"
+  assert_not_contains "$(cat "$log")" "pane close" "session start killed a live Herdr secondmate's pane"
+  assert_not_contains "$(cat "$log")" "tab create" "session start relaunched a live Herdr secondmate"
+  assert_contains "$out" "endpoint: alive (backend=herdr window=default:p-old)" \
+    "the later fleet read did not confirm the untouched live Herdr endpoint"
+  assert_grep 'herdr_pane_id=p-old' "$home/state/$SESSION_START_HERDR_SECOND_MATE_ID.meta" \
+    "the live path must not rewrite the Herdr pane meta"
+  pass "session start: a live Herdr secondmate is left untouched (no kill, no relaunch)"
 }
 
 # --- endpoint liveness: tmux and herdr, live and dead ------------------------
@@ -1282,6 +1311,7 @@ test_session_start_preserves_ambiguous_pi_process
 test_session_start_preserves_transiently_unreadable_tmux
 test_session_start_preserves_proven_bare_shell_recovery
 test_session_start_relaunches_herdr_husk_secondmate
+test_session_start_leaves_live_herdr_secondmate_untouched
 test_status_tail_bounding
 test_orphan_status_logs_are_printed
 test_endpoint_liveness_tmux
