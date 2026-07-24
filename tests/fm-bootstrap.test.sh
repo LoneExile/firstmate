@@ -645,6 +645,7 @@ make_routine_bootstrap_fixture() {
   git -C "$root" add -A
   git -C "$root" commit -qm initial
   fakebin=$(make_fake_toolchain "$case_dir")
+
   printf '%s|%s|%s\n' "$root" "$home" "$fakebin"
 }
 

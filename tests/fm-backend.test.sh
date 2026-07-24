@@ -745,7 +745,15 @@ case "\${1:-}" in
   display-message)
     for a in "\$@"; do case "\$a" in *pane_current_path*) printf '%s\\n' "$wt"; exit 0 ;; esac; done
     printf 'firstmate\\n'; exit 0 ;;
-  list-windows) exit 0 ;;
+  list-windows)
+    # Emit each recorded meta's window name so a peer with a live recorded window
+    # is present in the session inventory that #950's fm_backend_tmux_agent_state
+    # requires (an empty inventory would misclassify a live peer as 'missing').
+    for m in "\${FM_STATE_OVERRIDE:-/nonexistent}"/*.meta; do
+      [ -f "\$m" ] || continue
+      sed -n 's/^window=[^:]*://p' "\$m"
+    done
+    exit 0 ;;
 esac
 exit 0
 SH
